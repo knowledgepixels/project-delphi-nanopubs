@@ -3,7 +3,8 @@
 Project Delphi builds a knowledge graph of nanopublications that links mathematics, physics and
 chemistry to an EGFR→ERK subgraph in A431 cells, together with reusable cell programs
 (reversible binding, activation/deactivation, saturable conversion). Records use the
-[ProbKnow](https://w3id.org/spaces/probknow) namespace and will be published using a bot.
+[Project Delphi ontology](https://github.com/fractastical/project-delphi-ontology) (namespace
+`https://w3id.org/delphi/ontology/`) and will be published using a bot.
 
 This repository is the home of the project's nanopublication work.
 
@@ -12,6 +13,7 @@ This repository is the home of the project's nanopublication work.
 | Path | Contents |
 |---|---|
 | [`skills/`](skills/) | Agent skills for building and using the graph |
+| [`ontology`](https://github.com/fractastical/project-delphi-ontology/blob/main/probknow.ttl) (external) | The Project Delphi ontology the records use, documented in [`ONTOLOGY.md`](https://github.com/fractastical/project-delphi-ontology/blob/main/ONTOLOGY.md) |
 
 ## Agent skills
 
