@@ -14,13 +14,10 @@ This repository is the home of the project's nanopublication work.
 |---|---|
 | [`skills/`](skills/) | Agent skills for building and using the graph |
 | [`ontology`](https://github.com/fractastical/project-delphi-ontology/blob/main/probknow.ttl) (external) | The Project Delphi ontology the records use, documented in [`ONTOLOGY.md`](https://github.com/fractastical/project-delphi-ontology/blob/main/ONTOLOGY.md) |
-| retrieval | Tools to load existing relevant databases / Knowledge Graphs |
-| kg-building | Tools for making RDF/nanopubs out of the data |
-| kg-loading | Variants to keep it flexible during the hackathon: |
-| - triplestore: | Plain (non-nanopub-aware) triple store, for fast roundtripping |
-| - nanopub-stack: | Local stack of Registry/Query to load nanopubs |
-| - live-publishing: | Workflow to publish nanopubs to the live network, keeping track of versions etc. |
-| kg-querying | Creating and storing queries and query templates |
+| [`retrieval`](retrieval/)| Tools to load existing relevant databases / Knowledge Graphs |
+| [`kg-building`](kg-building/) | Tools for making RDF/nanopubs out of the data |
+| [`kg-loading`](kg-loading/) | Variants to keep it flexible during the hackathon:<ul><li>**triplestore:** Plain (non-nanopub-aware) triple store, for fast roundtripping</li><li>**nanopub-stack:** Local stack of Registry/Query to load nanopubs</li><li>**live-publishing:** Workflow to publish nanopubs to the live network, keeping track of versions etc.</li></ul> |
+| [`kg-querying`](kg-querying/) | Creating and storing queries and query templates |
 
 ## Agent skills
 
@@ -29,13 +26,13 @@ compatible agent.
 
 | Skill | Purpose |
 |---|---|
-| [`delphi`](skills/delphi/SKILL.md) | What is settled (ProbKnow namespace and claim templates, external identifiers, publishing by a bot) and the scientific rules every record follows. The data model is still open: the agent proposes anything else to the user rather than inventing it, and records agreed choices in `DECISIONS.md`. |
+| [`delphi`](skills/delphi/SKILL.md) | What is settled (Delphi namespace and claim templates, external identifiers, publishing by a bot) and the scientific rules every record follows. The data model is still open: the agent proposes anything else to the user rather than inventing it, and records agreed choices in `DECISIONS.md`. |
 
 ### Requirements
 
 - The general [nanopub skill](https://github.com/knowledgepixels/nanopub-skill), installed
   alongside these skills.
-- The [nanopub-java](https://github.com/Nanopublication/nanopub-java) CLI (`np`, 1.94.0 or
+- The [nanopub-java](https://github.com/Nanopublication/nanopub-java) CLI (`np`, 1.95.0 or
   later) with Java.
 
 ### Installation
