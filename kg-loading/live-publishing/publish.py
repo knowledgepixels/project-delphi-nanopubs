@@ -37,7 +37,9 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+import urllib.error
+import urllib.request
+from urllib.parse import urlencode, urlparse
 
 from rdflib import Dataset, Graph, Literal, Namespace, URIRef
 from rdflib.compare import to_canonical_graph
@@ -52,6 +54,10 @@ DEFAULT_LEDGER = HERE / "ledger.json"
 DEFAULT_ARCHIVE = HERE / "published"
 UI_PAGE = HERE / "ui.html"
 
+LIVE_QUERY = "https://query.knowledgepixels.com/"
+ADMIN_GRAPH = "http://purl.org/nanopub/admin/graph"
+ARTIFACT_CODE = "http://purl.org/nanopub/admin/artifactCode"
+READY_QUERY_STATES = {"READY", "LOADING_UPDATES"}
 LATEST_VERSION_QUERY = "RAiRsB2YywxjsBMkVRTREJBooXhf2ZOHoUs5lxciEl37I/get-latest-version-of-np"
 USER_INTROS_QUERY = "RAjHh6P11QFUaoPiMRBavdAnTq4YMJW4PB85oVFSBfYjU/get-all-user-intros"
 VOLATILE_PUBINFO_PREDICATES = {DCTERMS.created, NPX.supersedes}
@@ -126,6 +132,8 @@ class Settings:
         check_head: whether to make sure, before superseding, that the ledger's current version
             is still the newest one on the network.
         check_key: whether to make sure the key is declared for the signer before publishing.
+        query: the Query instance to ask which versions it has loaded, and, off the live network,
+            which version is the newest. None when there is none to ask.
     """
 
     np: list[str] = field(default_factory=lambda: default_np())
@@ -136,6 +144,7 @@ class Settings:
     archive: Path = DEFAULT_ARCHIVE
     check_head: bool = True
     check_key: bool = True
+    query: str | None = LIVE_QUERY
 
     @property
     def live(self) -> bool:
@@ -539,15 +548,17 @@ class Planned:
 class Publisher:
     """Signs and publishes drafts, superseding the versions the ledger has, and records them."""
 
-    def __init__(self, settings: Settings, runner=subprocess.run):
+    def __init__(self, settings: Settings, runner=subprocess.run, opener=urllib.request.urlopen):
         """Create a publisher.
 
         Args:
             settings: how to sign and publish.
             runner: what runs commands; replaceable for tests.
+            opener: what sends HTTP requests to the Query instance; replaceable for tests.
         """
         self.settings = settings
         self.runner = runner
+        self.opener = opener
         self.ledger = Ledger(settings.ledger)
         self._declared_keys: set[tuple[str, str]] | None = None
 
@@ -656,15 +667,82 @@ class Publisher:
         Raises:
             PublishError: if the network does not know the URI, or the chain has forked.
         """
-        heads = sorted({row["latest"] for row in self.query(LATEST_VERSION_QUERY, np=uri) if row.get("latest")})
+        if self.settings.live:
+            rows = self.query(LATEST_VERSION_QUERY, np=uri)
+        else:
+            rows = self.fetch_csv(f"api/{LATEST_VERSION_QUERY}", {"np": uri})
+        heads = sorted({row["latest"] for row in rows if row.get("latest")})
         if not heads:
             raise PublishError(
-                f"the network does not show {uri} yet. If it was published only minutes ago, wait for the "
-                "Query instances to load it; otherwise check it before superseding it"
+                f"{self.network_name()} does not show {uri} yet. If it was published only minutes ago, wait for "
+                "the Query instance to load it; otherwise check it before superseding it"
             )
         if len(heads) > 1:
             raise PublishError(f"the chain of {uri} has forked into {', '.join(heads)}; resolve that by hand first")
         return heads[0]
+
+    def network_name(self) -> str:
+        """How messages name the network being checked.
+
+        Returns:
+            ``the network``, or the Query instance's host off the live network.
+        """
+        return "the network" if self.settings.live else (urlparse(self.settings.query or "").hostname or "the network")
+
+    def fetch_csv(self, path: str, params: dict[str, str]) -> list[dict[str, str]]:
+        """Ask the configured Query instance for CSV, once it has said it is ready to answer.
+
+        An instance that is still loading answers too, but from an incomplete store, so its
+        answer would look like "not there" when it only means "not loaded yet".
+
+        Args:
+            path: the path under the instance's URL, e.g. ``repo/meta`` or ``api/<query>``.
+            params: the query string parameters.
+
+        Returns:
+            the result rows.
+
+        Raises:
+            PublishError: if there is no instance to ask, it is not ready, or it cannot be reached.
+        """
+        base = self.settings.query
+        if not base:
+            raise PublishError("no Query instance to ask: pass --query")
+        base = base.rstrip("/") + "/"
+        try:
+            with self.opener(urllib.request.Request(base, method="HEAD"), timeout=30) as response:
+                state = response.headers.get("Nanopub-Query-Status", "")
+            if state.upper() not in READY_QUERY_STATES:
+                raise PublishError(f"{base} is not ready to answer (status {state or 'unknown'}); try again later")
+            request = urllib.request.Request(base + path + "?" + urlencode(params), headers={"Accept": "text/csv"})
+            with self.opener(request, timeout=60) as response:
+                body = response.read().decode("utf-8")
+        except (urllib.error.URLError, OSError) as ex:
+            raise PublishError(f"cannot ask {base}: {ex}") from ex
+        return list(csv.DictReader(io.StringIO(body)))
+
+    def loaded(self, uris: list[str]) -> dict[str, bool]:
+        """Which of the given versions the Query instance has loaded, looked up by artifact code
+        in the admin graph of its meta repository.
+
+        Args:
+            uris: the versions' URIs.
+
+        Returns:
+            for each URI, whether the instance has it.
+
+        Raises:
+            PublishError: if the instance cannot be asked.
+        """
+        codes = {uri: artifact_code(uri) for uri in uris}
+        found: set[str] = set()
+        unique = sorted(set(codes.values()))
+        for start in range(0, len(unique), 100):
+            values = " ".join(json.dumps(code) for code in unique[start:start + 100])
+            query = (f"select ?code where {{ graph <{ADMIN_GRAPH}> {{ ?np <{ARTIFACT_CODE}> ?code }} "
+                     f"values ?code {{ {values} }} }}")
+            found |= {row["code"] for row in self.fetch_csv("repo/meta", {"query": query})}
+        return {uri: code in found for uri, code in codes.items()}
 
     def is_key_declared(self, pubkey: str, signer: str) -> bool:
         """Whether an introduction nanopub on the network declares the key for the signer.
@@ -755,11 +833,12 @@ class Publisher:
                 f"{current.uri} was signed with another key ({current.pubkey}); a version signed with this key "
                 f"({pubkey_id}) would not count as superseding it"
             )
-        if self.settings.live and self.settings.check_head:
+        if self.settings.check_head and (self.settings.live or self.settings.query):
             head = self.latest_version(current.uri)
             if head != current.uri:
                 raise PublishError(
-                    f"the ledger's current version is {current.uri}, but the network's newest is {head}. "
+                    f"the ledger's current version is {current.uri}, but the newest {self.network_name()} has is "
+                    f"{head}. "
                     "Pull the latest ledger, or record that version, before publishing another"
                 )
 
@@ -863,6 +942,36 @@ class Publisher:
         return sorted(records, key=lambda r: r["versions"][-1]["published"] if r["versions"] else "", reverse=True)
 
 
+def artifact_code(uri: str) -> str:
+    """The artifact code of a trusty URI.
+
+    Args:
+        uri: the URI, e.g. ``https://w3id.org/np/RA…``.
+
+    Returns:
+        its last path segment.
+    """
+    return uri.rstrip("/").rsplit("/", 1)[-1]
+
+
+def query_for(server: str | None) -> str | None:
+    """The Query instance that loads what a registry holds, by the naming convention of the
+    test deployments: ``test.registry.<domain>`` is paired with ``test.query.<domain>``.
+
+    Args:
+        server: the registry URL, or None for the live network.
+
+    Returns:
+        the Query instance's URL, or None if none is known for that registry.
+    """
+    if server is None:
+        return LIVE_QUERY
+    host = urlparse(server).hostname or ""
+    if host.startswith("test.registry."):
+        return "https://test.query." + host[len("test.registry."):] + "/"
+    return None
+
+
 def ledger_for(server: str | None) -> Path:
     """The default ledger for a target, so that test publications never mix with live ones.
 
@@ -901,6 +1010,7 @@ def settings_from(args: argparse.Namespace) -> Settings:
         the settings.
     """
     server = args.server or os.environ.get("DELPHI_NP_SERVER") or None
+    query = args.query or os.environ.get("DELPHI_NP_QUERY") or query_for(server)
     return Settings(
         np=shlex.split(args.np or os.environ["DELPHI_NP"]) if (args.np or os.environ.get("DELPHI_NP")) else default_np(),
         key=Path(args.key or os.environ.get("DELPHI_NP_KEY", str(Path.home() / ".nanopub" / "id_rsa"))).expanduser(),
@@ -910,6 +1020,7 @@ def settings_from(args: argparse.Namespace) -> Settings:
         archive=archive_for(server),
         check_head=not args.skip_head_check,
         check_key=not args.skip_key_check,
+        query=query,
     )
 
 
@@ -926,16 +1037,20 @@ def print_status(plans: list[Planned]) -> None:
         print(f"{plan.state:<10} {repo_path(plan.path)}  {detail}".rstrip())
 
 
-def print_published(records: list[dict]) -> None:
+def print_published(records: list[dict], loaded: dict[str, bool] | None = None) -> None:
     """Print every record and its versions, newest version last.
 
     Args:
         records: the records.
+        loaded: for each version's URI, whether the Query instance has it; None to leave that out.
     """
     for record in records:
         print(f"{record['label']}  ({record['key']})")
         for version in record["versions"]:
-            print(f"    {version['published']}  {version['uri']}")
+            mark = ""
+            if loaded is not None:
+                mark = "  loaded" if loaded.get(version["uri"]) else "  NOT LOADED"
+            print(f"    {version['published']}  {version['uri']}{mark}")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -952,6 +1067,13 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8")
         elif self.path == "/api/state":
             self.reply_json(HTTPStatus.OK, self.state())
+        elif self.path == "/api/loaded":
+            try:
+                uris = [v["uri"] for record in self.publisher.published() for v in record["versions"]]
+                self.reply_json(HTTPStatus.OK, {"query": self.publisher.settings.query,
+                                                "loaded": self.publisher.loaded(uris) if uris else {}})
+            except PublishError as ex:
+                self.reply_json(HTTPStatus.BAD_GATEWAY, {"error": str(ex)})
         else:
             self.reply_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
@@ -1003,6 +1125,7 @@ class Handler(BaseHTTPRequestHandler):
                 "signer": settings.signer,
                 "key": str(settings.key),
                 "ledger": repo_path(settings.ledger),
+                "query": settings.query,
             },
         }
 
@@ -1070,6 +1193,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     common.add_argument("--server", help="registry to publish to instead of the live network, e.g. "
                                          "https://test.registry.knowledgepixels.com/ (default: $DELPHI_NP_SERVER)")
     common.add_argument("--ledger", help="ledger file (default: ledger.json, or ledger.<host>.json with --server)")
+    common.add_argument("--query", help="Query instance to check against (default: $DELPHI_NP_QUERY, else "
+                                        "query.knowledgepixels.com, or test.query.<domain> for "
+                                        "test.registry.<domain>)")
     common.add_argument("--np", help="command running the nanopub-java CLI (default: $DELPHI_NP, else "
                                      "~/.nanopub/bin/np if it exists, else np)")
     common.add_argument("--skip-head-check", action="store_true",
@@ -1081,7 +1207,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     commands = parser.add_subparsers(dest="command", required=True)
     status = commands.add_parser("status", parents=[common], help="what publishing each draft would do")
     status.add_argument("paths", nargs="*", type=Path, default=[REPO_ROOT])
-    commands.add_parser("list", parents=[common], help="what has been published")
+    listing = commands.add_parser("list", parents=[common], help="what has been published")
+    listing.add_argument("--check", action="store_true",
+                         help="ask the Query instance which versions it has loaded")
     publish = commands.add_parser("publish", parents=[common], help="sign and publish drafts")
     publish.add_argument("paths", nargs="+", type=Path)
     publish.add_argument("--dry-run", action="store_true", help="sign and validate, but publish and record nothing")
@@ -1105,7 +1233,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         print_status(publisher.plan(args.paths))
     elif args.command == "list":
-        print_published(publisher.published())
+        records = publisher.published()
+        loaded = None
+        if args.check:
+            try:
+                loaded = publisher.loaded([v["uri"] for r in records for v in r["versions"]])
+            except PublishError as ex:
+                print(f"cannot check: {ex}", file=sys.stderr)
+                return 1
+        print_published(records, loaded)
+        if loaded is not None and not all(loaded.values()):
+            return 1
     elif args.command == "serve":
         serve(publisher, args.paths, args.port)
     else:

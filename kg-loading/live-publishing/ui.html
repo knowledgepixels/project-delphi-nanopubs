@@ -45,6 +45,9 @@
   .record ol { margin: 6px 0 0; padding-left: 20px; }
   .record li { font-size: 12px; color: var(--muted); }
   .empty { color: var(--muted); padding: 12px 0; }
+  .loaded { font-weight: 600; } .loaded.yes { color: var(--new); } .loaded.no { color: var(--changed); }
+  .loaded.unknown { color: var(--muted); font-weight: 400; }
+  #loadedNote { color: var(--muted); font-size: 13px; }
   #message { position: sticky; top: 0; padding: 8px 12px; border-radius: 6px; margin: 8px 0; display: none; white-space: pre-wrap; font-size: 13px; }
   #message.ok { display: block; background: var(--panel); border: 1px solid var(--new); }
   #message.fail { display: block; background: var(--panel); border: 1px solid var(--bad); }
@@ -72,6 +75,7 @@
   </table>
 
   <h2>Published</h2>
+  <div class="toolbar"><span id="loadedNote"></span><button class="secondary" id="recheck">Check again</button></div>
   <div id="published"></div>
 </main>
 <script>
@@ -79,6 +83,8 @@ const TOKEN = "__TOKEN__";
 const ACTION = { new: "Publish", changed: "Publish new version" };
 let busy = false;
 let lastState = null;
+let loaded = null;
+let loadedError = null;
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -107,6 +113,21 @@ async function load() {
   const response = await fetch("/api/state");
   lastState = await response.json();
   render();
+  await checkLoaded();
+}
+
+async function checkLoaded() {
+  loadedError = null;
+  document.getElementById("loadedNote").textContent = "Asking the Query instance which versions it has…";
+  try {
+    const response = await fetch("/api/loaded");
+    const result = await response.json();
+    if (response.ok) loaded = result.loaded; else { loaded = null; loadedError = result.error; }
+  } catch (error) {
+    loaded = null;
+    loadedError = String(error);
+  }
+  render();
 }
 
 function render() {
@@ -115,7 +136,12 @@ function render() {
   const s = state.settings;
   document.getElementById("settings").replaceChildren(
     "Publishing to ", el("b", {}, s.target), " as ", el("b", {}, s.signer || "— no signer set —"),
-    " · key ", s.key, " · ledger ", s.ledger);
+    " · key ", s.key, " · ledger ", s.ledger, " · checking against ", s.query || "— no Query instance —");
+  const versions = state.published.reduce((n, r) => n + r.versions.length, 0);
+  const missing = loaded ? Object.values(loaded).filter(v => !v).length : 0;
+  document.getElementById("loadedNote").textContent = loadedError ? "Could not check: " + loadedError
+    : !loaded ? "" : !versions ? "" : missing ? `${missing} of ${versions} versions not loaded yet on ${s.query}`
+    : `All ${versions} versions are loaded on ${s.query}`;
   renderDrafts(state.drafts, Boolean(s.signer));
   renderPublished(state.published);
 }
@@ -144,11 +170,16 @@ function renderDrafts(drafts, canSign) {
     ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Nothing to publish."))]));
 }
 
+function loadedMark(uri) {
+  if (!loaded || !(uri in loaded)) return el("span", { class: "loaded unknown" }, loadedError ? "not checked" : "checking…");
+  return loaded[uri] ? el("span", { class: "loaded yes" }, "✓ loaded") : el("span", { class: "loaded no" }, "not loaded yet");
+}
+
 function renderPublished(records) {
   const items = records.map(r => el("div", { class: "record" },
     el("div", {}, el("b", {}, r.label), " · ", link(r.versions[r.versions.length - 1].uri)),
     el("div", { class: "key" }, r.key),
-    el("ol", {}, ...r.versions.map(v => el("li", {}, v.published, " · ", link(v.uri), " · ", v.source)))));
+    el("ol", {}, ...r.versions.map(v => el("li", {}, v.published, " · ", link(v.uri), " · ", v.source, " · ", loadedMark(v.uri))))));
   document.getElementById("published").replaceChildren(
     ...(items.length ? items : [el("div", { class: "empty" }, "Nothing published yet.")]));
 }
@@ -179,6 +210,7 @@ async function publish(draft, dryRun) {
 }
 
 document.getElementById("reload").addEventListener("click", load);
+document.getElementById("recheck").addEventListener("click", checkLoaded);
 document.getElementById("filter").addEventListener("input", render);
 document.getElementById("hideDone").addEventListener("change", render);
 load();

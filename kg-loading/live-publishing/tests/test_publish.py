@@ -9,8 +9,10 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from urllib.parse import parse_qs, urlparse
+import re
 import warnings
-from http.server import HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
@@ -59,8 +61,57 @@ sub:pubinfo {
 """
 
 
+class FakeQuery(BaseHTTPRequestHandler):
+    """A stand-in for a Query instance, answering from the fake CLI's state: it has loaded what
+    the fake CLI published, minus the URIs listed under ``not_loaded``."""
+
+    state_file: Path
+
+    def state(self) -> dict:
+        """The fake CLI's state.
+
+        Returns:
+            the state.
+        """
+        return json.loads(self.state_file.read_text())
+
+    def do_HEAD(self) -> None:
+        """Report the instance's status, READY unless the state says otherwise."""
+        self.send_response(200)
+        self.send_header("Nanopub-Query-Status", self.state().get("query_status", "READY"))
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        """Answer the meta repository's artifact-code lookup and the latest-version query."""
+        url = urlparse(self.path)
+        params = {k: v[0] for k, v in parse_qs(url.query).items()}
+        state = self.state()
+        self.state_file.write_text(json.dumps({**state, "query_requests": state.get("query_requests", []) + [url.path]}))
+        loaded = [uri for uri in state.get("published", []) if uri not in state.get("not_loaded", [])]
+        if url.path == "/repo/meta":
+            asked = re.findall(r'"([^"]+)"', params["query"])
+            body = "code\n" + "".join(code + "\n" for code in asked if any(u.endswith("/" + code) for u in loaded))
+        elif url.path.endswith("/get-latest-version-of-np"):
+            uri = params["np"]
+            body = "latest,date\n" + (f"{state.get('heads', {}).get(uri, uri)},2026-10-26T00:00:00Z\n" if uri in loaded else "")
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        data = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args) -> None:
+        """Keep the test output quiet."""
+
+
 class Workspace:
-    """A temporary directory with drafts, a key pair, a ledger and the fake CLI's state."""
+    """A temporary directory with drafts, a key pair, a ledger, the fake CLI's state and a fake
+    Query instance."""
 
     def __init__(self, root: Path):
         """Set up the directory.
@@ -76,6 +127,15 @@ class Workspace:
         self.key.write_text("private")
         self.key.with_name("id_rsa.pub").write_text(PUBKEY + "\n")
         self.save_state({"intros": [[SIGNER, PUBKEY]]})
+        handler = type("BoundFakeQuery", (FakeQuery,), {"state_file": self.state_file})
+        self.query_server = HTTPServer(("127.0.0.1", 0), handler)
+        self.query_url = f"http://127.0.0.1:{self.query_server.server_address[1]}/"
+        threading.Thread(target=self.query_server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        """Stop the fake Query instance."""
+        self.query_server.shutdown()
+        self.query_server.server_close()
 
     def draft(self, name: str, label: str = "EGF interacts with EGFR", created: str = "2026-10-23T13:21:59Z",
               claim: str = CLAIM) -> Path:
@@ -136,6 +196,7 @@ class Workspace:
             signer=SIGNER,
             ledger=self.root / "ledger.json",
             archive=self.root / "published",
+            query=self.query_url,
         )
         for name, value in overrides.items():
             setattr(settings, name, value)
@@ -165,6 +226,7 @@ class PublishTest(unittest.TestCase):
 
     def tearDown(self):
         """Remove the workspace."""
+        self.ws.close()
         self.tmp.cleanup()
 
     def test_a_new_draft_is_published_and_recorded(self):
@@ -341,20 +403,71 @@ class PublishTest(unittest.TestCase):
             publisher.publish(self.ws.draft("claim.trig"))
         self.assertEqual([], publisher.ledger.versions(CLAIM))
 
-    def test_a_test_server_uses_its_own_ledger_and_skips_the_network_checks(self):
-        """Publishing to a test registry keeps a separate ledger, and asks the live network nothing."""
+    def test_a_test_server_has_its_own_ledger_and_query_instance(self):
+        """Test publications keep a separate ledger, and are checked against the test Query instance."""
         server = "https://test.registry.knowledgepixels.com/"
         self.assertEqual("ledger.test.registry.knowledgepixels.com.json", publish.ledger_for(server).name)
         self.assertEqual("ledger.json", publish.ledger_for(None).name)
+        self.assertEqual("https://test.query.knowledgepixels.com/", publish.query_for(server))
+        self.assertEqual(publish.LIVE_QUERY, publish.query_for(None))
+        self.assertIsNone(publish.query_for("http://localhost:9292/"))
+
+    def test_off_the_live_network_the_query_instance_decides_the_newest_version(self):
+        """Superseding on a test registry asks its Query instance, not the live network, and skips
+        the key check, which only the live network can answer."""
         self.ws.save_state({"intros": []})
-        publisher = self.ws.publisher(server=server)
-        publisher.publish(self.ws.draft("claim.trig"))
+        publisher = self.ws.publisher(server="https://test.registry.knowledgepixels.com/")
+        first = publisher.publish(self.ws.draft("claim.trig"))
+        self.ws.save_state({**self.ws.state(), "heads": {first["uri"]: "https://w3id.org/np/RAnewerontest"}})
+
+        with self.assertRaisesRegex(PublishError, "RAnewerontest"):
+            publisher.publish(self.ws.draft("claim.trig", label="EGF binds EGFR"))
+        self.assertEqual([], self.ws.calls("query"))
+        self.assertIn("/api/" + publish.LATEST_VERSION_QUERY, self.ws.state()["query_requests"])
+        self.assertEqual(["-u", "https://test.registry.knowledgepixels.com/"], self.ws.calls("publish")[0][1:3])
+
+    def test_off_the_live_network_a_version_the_query_instance_lacks_is_not_superseded(self):
+        """If the test Query instance has not loaded the current version, superseding it waits."""
+        publisher = self.ws.publisher(server="https://test.registry.knowledgepixels.com/")
+        first = publisher.publish(self.ws.draft("claim.trig"))
+        self.ws.save_state({**self.ws.state(), "not_loaded": [first["uri"]]})
+
+        with self.assertRaisesRegex(PublishError, "127.0.0.1 does not show"):
+            publisher.publish(self.ws.draft("claim.trig", label="EGF binds EGFR"))
+
+    def test_without_a_query_instance_the_head_check_is_skipped(self):
+        """A registry with no known Query instance can only be superseded without the head check."""
+        publisher = self.ws.publisher(server="http://localhost:9292/", query=None)
+        first = publisher.publish(self.ws.draft("claim.trig"))
 
         second = publisher.publish(self.ws.draft("claim.trig", label="EGF binds EGFR"))
 
-        self.assertEqual("superseded", second["status"])
-        self.assertEqual([], self.ws.calls("query"))
-        self.assertEqual(["-u", server], self.ws.calls("publish")[0][1:3])
+        self.assertEqual(first["uri"], second["supersedes"])
+
+    def test_loaded_versions_are_found_by_artifact_code(self):
+        """The Query instance is asked, by artifact code, which versions it has loaded."""
+        publisher = self.ws.publisher()
+        first = publisher.publish(self.ws.draft("claim.trig"))
+        second = publisher.publish(self.ws.draft("claim.trig", label="EGF binds EGFR"))
+        self.ws.save_state({**self.ws.state(), "not_loaded": [second["uri"]]})
+
+        loaded = publisher.loaded([first["uri"], second["uri"], "https://w3id.org/np/RAneverpublished"])
+
+        self.assertEqual({first["uri"]: True, second["uri"]: False, "https://w3id.org/np/RAneverpublished": False},
+                         loaded)
+        self.assertIn("/repo/meta", self.ws.state()["query_requests"])
+
+    def test_a_query_instance_still_loading_is_not_trusted(self):
+        """An instance that is not ready would answer from an incomplete store, so it is not asked."""
+        self.ws.save_state({**self.ws.state(), "query_status": "LOADING_INITIAL"})
+
+        with self.assertRaisesRegex(PublishError, "not ready"):
+            self.ws.publisher().loaded(["https://w3id.org/np/RAanything"])
+
+    def test_an_unreachable_query_instance_is_reported(self):
+        """A Query instance that cannot be reached gives a clear error."""
+        with self.assertRaisesRegex(PublishError, "cannot ask"):
+            self.ws.publisher(query="http://127.0.0.1:9/").loaded(["https://w3id.org/np/RAanything"])
 
     def test_a_signed_file_is_not_a_draft(self):
         """An already signed file is listed as signed and refused for publishing."""
@@ -465,6 +578,7 @@ class ServerTest(unittest.TestCase):
         """Stop the server and remove the workspace."""
         self.server.shutdown()
         self.server.server_close()
+        self.ws.close()
         self.tmp.cleanup()
 
     def request(self, path: str, body: dict | None = None, token: str | None = "secret-token"):
@@ -541,6 +655,26 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual("dry-run", result["status"])
         self.assertEqual(["Nanopub has no assertion template."], result["warnings"])
+
+    def test_the_page_learns_which_versions_are_loaded(self):
+        """The page's check reports each published version as loaded or not."""
+        _, result = self.request("/api/publish", {"path": str(self.draft.resolve())})
+
+        status, answer = self.request("/api/loaded")
+
+        self.assertEqual(200, status)
+        self.assertEqual({result["uri"]: True}, answer["loaded"])
+        self.assertEqual(self.ws.query_url, answer["query"])
+
+    def test_the_page_is_told_when_the_check_fails(self):
+        """If the Query instance cannot be asked, the page gets the reason."""
+        self.request("/api/publish", {"path": str(self.draft.resolve())})
+        self.ws.save_state({**self.ws.state(), "query_status": "LOADING_INITIAL"})
+
+        status, answer = self.request("/api/loaded")
+
+        self.assertEqual(502, status)
+        self.assertIn("not ready", answer["error"])
 
     def test_a_failure_is_reported_with_its_reason(self):
         """A refusal comes back as an error message for the page to show."""

@@ -63,13 +63,26 @@ repeated:
 | `--signer` | `DELPHI_NP_SIGNER` | none, required to publish |
 | `--key` | `DELPHI_NP_KEY` | `~/.nanopub/id_rsa` (its public key is `<key>.pub`) |
 | `--server` | `DELPHI_NP_SERVER` | the live network |
+| `--query` | `DELPHI_NP_QUERY` | `https://query.knowledgepixels.com/`, or `test.query.<domain>` for `test.registry.<domain>` |
 | `--np` | `DELPHI_NP` | `~/.nanopub/bin/np`, else `np` |
 | `--ledger` | | `ledger.json`, or `ledger.<host>.json` with `--server` |
 
 With `--server`, for example `https://test.registry.knowledgepixels.com/`, the tool uses a
 separate ledger and archive (`ledger.<host>.json`, `published.<host>/`). These aren't committed,
-so test publications never end up in the live ledger. The two network checks are skipped there,
-because they only see the live network.
+so test publications never end up in the live ledger. The tool then checks against the Query
+instance paired with that registry (`https://test.query.knowledgepixels.com/` for the one
+above): before superseding, it asks that instance for the newest version. The declared-key
+check is skipped, because only the live network knows the key introductions. A registry with
+no known Query instance gets neither check unless you pass `--query`.
+
+### Is it published?
+
+`list --check` (and the **Published** list on the page) asks the Query instance which
+versions it has loaded. It looks up their artifact codes (`npa:artifactCode` in the admin
+graph of `/repo/meta`) in one query. A version shows as *not loaded yet* for a few seconds to
+a minute after publishing, until the instance has loaded it. `list --check` exits with 1 while
+any version is missing. The tool only asks an instance that reports itself ready
+(`Nanopub-Query-Status`), since one that is still loading answers from an incomplete store.
 
 ## Usage
 
