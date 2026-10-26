@@ -86,7 +86,9 @@ python3 kg-loading/live-publishing/publish.py publish kg-building/claims/egf-int
 python3 kg-loading/live-publishing/publish.py list
 ```
 
-`--dry-run` signs and validates without publishing anything or recording it.
+`--dry-run` signs and validates without publishing anything or recording it. Validation issues
+that don't stop publishing (e.g. "Nanopub has no assertion template.") are listed as warnings,
+after a dry run and after a real publish, in the CLI and on the page.
 
 ### Web page
 

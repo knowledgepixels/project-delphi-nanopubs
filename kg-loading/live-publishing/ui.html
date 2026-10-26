@@ -48,6 +48,9 @@
   #message { position: sticky; top: 0; padding: 8px 12px; border-radius: 6px; margin: 8px 0; display: none; white-space: pre-wrap; font-size: 13px; }
   #message.ok { display: block; background: var(--panel); border: 1px solid var(--new); }
   #message.fail { display: block; background: var(--panel); border: 1px solid var(--bad); }
+  #message.warn { display: block; background: var(--panel); border: 1px solid var(--changed); }
+  #message ul { margin: 6px 0 0; padding-left: 20px; white-space: normal; }
+  #message li { color: var(--changed); }
   @media (max-width: 700px) { td.file { display: none; } th.file { display: none; } }
 </style>
 </head>
@@ -90,10 +93,14 @@ function link(uri) {
   return uri ? el("a", { href: uri, target: "_blank", rel: "noopener", class: "uri" }, uri.replace("https://w3id.org/np/", "")) : "";
 }
 
-function show(text, ok) {
+function show(text, ok, warnings = []) {
   const box = document.getElementById("message");
-  box.textContent = text;
-  box.className = ok ? "ok" : "fail";
+  box.replaceChildren(text);
+  if (warnings.length) {
+    box.append(el("div", {}, warnings.length === 1 ? "1 warning from validation:" : `${warnings.length} warnings from validation:`),
+      el("ul", {}, ...warnings.map(w => el("li", {}, w))));
+  }
+  box.className = !ok ? "fail" : warnings.length ? "warn" : "ok";
 }
 
 async function load() {
@@ -161,7 +168,8 @@ async function publish(draft, dryRun) {
     });
     const result = await response.json();
     if (!response.ok) show(result.error, false);
-    else show(`${result.status}: ${result.uri}` + (result.supersedes ? `\nsupersedes ${result.supersedes}` : ""), true);
+    else show(`${result.status}: ${result.uri}` + (result.supersedes ? `\nsupersedes ${result.supersedes}` : ""), true,
+      result.warnings || []);
   } catch (error) {
     show(String(error), false);
   } finally {

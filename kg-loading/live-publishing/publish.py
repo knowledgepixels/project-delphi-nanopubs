@@ -691,7 +691,8 @@ class Publisher:
 
         Returns:
             what was done: ``status`` (``published``, ``superseded``, ``unchanged`` or
-            ``dry-run``), ``key``, ``label``, ``uri`` and ``supersedes``.
+            ``dry-run``), ``key``, ``label``, ``uri``, ``supersedes``, and ``warnings``: the
+            issues the CLI's validation found, which do not stop it from publishing.
 
         Raises:
             PublishError: if the draft cannot be published as it is.
@@ -722,8 +723,9 @@ class Publisher:
             self.run("sign", "-k", str(settings.key), "-s", settings.signer, "-o", str(signed), str(prepared))
             uri = str(find_nanopub(load_dataset(signed), signed)[0])
             output = self.run("publish", *self.publish_args(dry_run), str(signed))
+            warnings = self.warnings_in(output)
             if dry_run:
-                return self.outcome("dry-run", draft, uri, supersedes)
+                return self.outcome("dry-run", draft, uri, supersedes, warnings)
             server = self.accepted_by(output)
             self.archive(signed, uri)
         self.ledger.add(draft.key, draft.label, Version(
@@ -736,7 +738,7 @@ class Publisher:
             server=server,
             supersedes=supersedes,
         ))
-        return self.outcome("superseded" if supersedes else "published", draft, uri, supersedes)
+        return self.outcome("superseded" if supersedes else "published", draft, uri, supersedes, warnings)
 
     def check_can_supersede(self, current: Version, pubkey_id: str) -> None:
         """Make sure a new version can supersede the ledger's current one.
@@ -793,6 +795,32 @@ class Publisher:
             raise PublishError(f"the nanopub was not published:\n{output.strip()}")
         return match.group(1)
 
+    @staticmethod
+    def warnings_in(output: str) -> list[str]:
+        """The warnings the CLI printed, one per issue.
+
+        The CLI reports validation issues as one log line listing them all, e.g.
+        ``WARN … - Verification of nanopub <uri> shows some issues: [Nanopub has no assertion
+        template., …]``; those are split into one warning each.
+
+        Args:
+            output: what the CLI printed.
+
+        Returns:
+            the warnings, in the order printed.
+        """
+        warnings = []
+        for line in output.splitlines():
+            if " WARN " not in line:
+                continue
+            message = line.split(" - ", 1)[-1].strip()
+            issues = re.search(r"shows some issues: \[(.*)\]$", message)
+            if issues:
+                warnings += [issue.strip() for issue in re.split(r"(?<=\.), ", issues.group(1)) if issue.strip()]
+            else:
+                warnings.append(message)
+        return warnings
+
     def archive(self, signed: Path, uri: str) -> None:
         """Keep a copy of a published nanopub, named by its artifact code.
 
@@ -804,7 +832,8 @@ class Publisher:
         shutil.copyfile(signed, self.settings.archive / (uri.rstrip("/").rsplit("/", 1)[-1] + ".trig"))
 
     @staticmethod
-    def outcome(status: str, draft: Draft, uri: str, supersedes: str | None) -> dict:
+    def outcome(status: str, draft: Draft, uri: str, supersedes: str | None,
+                warnings: list[str] | None = None) -> dict:
         """Describe what publishing a draft did.
 
         Args:
@@ -812,11 +841,13 @@ class Publisher:
             draft: the draft.
             uri: the URI of the version concerned.
             supersedes: the URI of the version it replaces, if any.
+            warnings: the issues the CLI's validation found, if it ran.
 
         Returns:
             the description.
         """
-        return {"status": status, "key": draft.key, "label": draft.label, "uri": uri, "supersedes": supersedes}
+        return {"status": status, "key": draft.key, "label": draft.label, "uri": uri, "supersedes": supersedes,
+                "warnings": warnings or []}
 
     def published(self) -> list[dict]:
         """Every record in the ledger, with all its versions, newest record first.
@@ -1112,6 +1143,8 @@ def publish_all(publisher: Publisher, paths: list[Path], dry_run: bool) -> int:
             continue
         extra = f" (supersedes {result['supersedes']})" if result["supersedes"] else ""
         print(f"{result['status']:<10} {file}  {result['uri']}{extra}")
+        for warning in result["warnings"]:
+            print(f"{'':<10} warning: {warning}")
     return 1 if failed else 0
 
 

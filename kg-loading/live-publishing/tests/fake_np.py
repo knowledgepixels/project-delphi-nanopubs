@@ -6,7 +6,8 @@ It keeps its state in the JSON file named by ``FAKE_NP_STATE``:
 - ``published``: the URIs it has published;
 - ``heads``: chain heads to report instead of the URI asked about;
 - ``intros``: the (user, public key) pairs introductions declare;
-- ``refuse_publish``: when true, publishing prints no success line.
+- ``refuse_publish``: when true, publishing prints no success line;
+- ``issues``: validation issues to report when publishing, as the real CLI logs them.
 """
 
 import hashlib
@@ -101,6 +102,9 @@ def publish(args: list[str], state: dict) -> None:
     dataset = Dataset()
     dataset.parse(args[-1], format="trig")
     uri = str(next(s for s, p, o, _ in dataset.quads((None, RDF.type, NP.Nanopublication, None))))
+    if state.get("issues"):
+        print(f"[main] WARN org.nanopub.extra.server.PublishNanopub - Verification of nanopub {uri} shows some "
+              f"issues: [{', '.join(state['issues'])}]", file=sys.stderr)
     if "--dry-run" in args:
         print(f"Nanopub NOT published: --dry-run, np-uri={uri}")
         return

@@ -291,6 +291,47 @@ class PublishTest(unittest.TestCase):
         self.assertFalse((self.ws.root / "published").exists())
         self.assertIn("--dry-run", self.ws.calls("publish")[0])
 
+    def test_a_dry_run_reports_the_validation_issues(self):
+        """The issues the CLI's validation finds come back one by one with the dry run."""
+        self.ws.save_state({**self.ws.state(), "issues": ["Nanopub has no assertion template.",
+                                                          "Nanopub has no provenance template."]})
+
+        result = self.ws.publisher().publish(self.ws.draft("claim.trig"), dry_run=True)
+
+        self.assertEqual(["Nanopub has no assertion template.", "Nanopub has no provenance template."],
+                         result["warnings"])
+
+    def test_a_publish_reports_the_validation_issues_too(self):
+        """A real publish also returns the issues, though they did not stop it."""
+        self.ws.save_state({**self.ws.state(), "issues": ["Nanopub has no assertion template."]})
+
+        result = self.ws.publisher().publish(self.ws.draft("claim.trig"))
+
+        self.assertEqual("published", result["status"])
+        self.assertEqual(["Nanopub has no assertion template."], result["warnings"])
+
+    def test_a_clean_dry_run_has_no_warnings(self):
+        """Without issues the warnings are empty."""
+        result = self.ws.publisher().publish(self.ws.draft("claim.trig"), dry_run=True)
+
+        self.assertEqual([], result["warnings"])
+
+    def test_warnings_are_read_from_the_cli_output(self):
+        """The CLI's own output, as nanopub-java 1.94.0 prints it, is split into its issues."""
+        output = (
+            "[main] WARN org.nanopub.extra.server.PublishNanopub - Verification of nanopub "
+            "https://w3id.org/np/RAUUk03ERPPfWF0DSGW69DMjBn_16y6nTEjvZjPo4oVHw shows some issues: "
+            "[Nanopub creation time is older than one hour., Nanopub has no assertion template., "
+            "Nanopub has no provenance template.]\n"
+            "[main] INFO org.nanopub.extra.server.NanopubServerUtils - Using 3 registry instance(s)\n"
+            "[main] WARN org.example.Other - Something else, worth knowing\n"
+            "Nanopub NOT published: --dry-run, np-uri=https://w3id.org/np/RAUUk03E\n"
+        )
+
+        self.assertEqual(["Nanopub creation time is older than one hour.", "Nanopub has no assertion template.",
+                          "Nanopub has no provenance template.", "Something else, worth knowing"],
+                         Publisher.warnings_in(output))
+
     def test_a_publish_the_cli_does_not_confirm_is_not_recorded(self):
         """If the CLI does not report the nanopub as published, the ledger is left alone."""
         self.ws.save_state({**self.ws.state(), "refuse_publish": True})
@@ -490,6 +531,16 @@ class ServerTest(unittest.TestCase):
 
         self.assertEqual(409, status)
         self.assertIn("not a draft this page lists", result["error"])
+
+    def test_a_dry_run_through_the_page_returns_the_warnings(self):
+        """The page gets the validation issues to show."""
+        self.ws.save_state({**self.ws.state(), "issues": ["Nanopub has no assertion template."]})
+
+        status, result = self.request("/api/publish", {"path": str(self.draft.resolve()), "dryRun": True})
+
+        self.assertEqual(200, status)
+        self.assertEqual("dry-run", result["status"])
+        self.assertEqual(["Nanopub has no assertion template."], result["warnings"])
 
     def test_a_failure_is_reported_with_its_reason(self):
         """A refusal comes back as an error message for the page to show."""
