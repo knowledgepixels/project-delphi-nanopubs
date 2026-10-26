@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the nanopub skill, the nanopub-java CLI (np) with Java, and network access to fetch sources.
 metadata:
   author: knowledgepixels
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Project Delphi
@@ -19,11 +19,20 @@ Nanopub mechanics come from the `nanopub` skill; load it too.
 ## Settled
 
 - One record per nanopub.
-- Terms live in the ProbKnow namespace (`https://w3id.org/probknow/ontology/`), governed by the
-  ProbKnow space (`https://w3id.org/spaces/probknow`). Existing ProbKnow terms and templates are
-  reused first.
-- Claims are `pk:Claim`, created with the ProbKnow claim template; their evidence uses the
-  ProbKnow evidence item template.
+- Terms come from the [Project Delphi ontology](https://github.com/fractastical/project-delphi-ontology)
+  v2.0 ([`delphi.ttl`](https://github.com/fractastical/project-delphi-ontology/blob/main/delphi.ttl)):
+  prefix `delphi:` = `https://w3id.org/delphi/ontology/`. Individuals are `delphir:<kind>/<id>`
+  under `https://w3id.org/delphi/resource/`. Existing Delphi terms and templates are reused first.
+  The legacy `https://w3id.org/probknow/...` IRIs are never used in new records.
+- Claims are `delphi:Claim` (a subclass of `delphi:Hypothesis`), created with the Project Delphi
+  claim template, with free-text context in `delphi:context`. Their evidence is
+  `delphi:EvidenceItem`, linked with `delphi:hasEvidence` and created with the Project Delphi
+  evidence item template. Referenced entities such as genes or drugs are `delphi:Concept`.
+- Deprecated terms are not used in new records: `delphi:Paper` (use the source's
+  `https://doi.org/` IRI, typed `fabio:ScholarlyWork` if a type is needed), `delphi:Model` (an
+  assessing `prov:SoftwareAgent` with `delphi:usesModel` to a `delphi:LanguageModel`),
+  `delphi:assessedBy` (use `prov:wasAttributedTo`) and `delphi:derivedFromPaper` (use
+  `prov:wasDerivedFrom`).
 - External identifiers (Cellosaurus, BioModels, UniProt, GO, ChEBI, SBO, ECO, QUDT) are used
   unchanged. A matching label never makes two things the same.
 - Nanopubs will be published using a bot. **Nothing is published** unless the user explicitly

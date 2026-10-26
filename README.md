@@ -3,7 +3,7 @@
 Project Delphi builds a knowledge graph of nanopublications that links mathematics, physics and
 chemistry to an EGFR→ERK subgraph in A431 cells, together with reusable cell programs
 (reversible binding, activation/deactivation, saturable conversion). Records use the
-[Project Delphi ontology](https://github.com/fractastical/project-delphi-ontology) (namespace
+[Project Delphi ontology](https://github.com/fractastical/project-delphi-ontology) v2.0 (namespace
 `https://w3id.org/delphi/ontology/`) and will be published using a bot.
 
 This repository is the home of the project's nanopublication work.
@@ -13,7 +13,7 @@ This repository is the home of the project's nanopublication work.
 | Path | Contents |
 |---|---|
 | [`skills/`](skills/) | Agent skills for building and using the graph |
-| [`ontology`](https://github.com/fractastical/project-delphi-ontology/blob/main/probknow.ttl) (external) | The Project Delphi ontology the records use, documented in [`ONTOLOGY.md`](https://github.com/fractastical/project-delphi-ontology/blob/main/ONTOLOGY.md) |
+| [`ontology`](https://github.com/fractastical/project-delphi-ontology/blob/main/delphi.ttl) (external) | The Project Delphi ontology the records use, documented in [`ONTOLOGY.md`](https://github.com/fractastical/project-delphi-ontology/blob/main/ONTOLOGY.md) |
 | [`retrieval`](retrieval/)| Tools to load existing relevant databases / Knowledge Graphs |
 | [`kg-building`](kg-building/) | Tools for making RDF/nanopubs out of the data |
 | [`kg-loading`](kg-loading/) | Variants to keep it flexible during the hackathon:<ul><li>**triplestore:** Plain (non-nanopub-aware) triple store, for fast roundtripping</li><li>**nanopub-stack:** Local stack of Registry/Query to load nanopubs</li><li>**live-publishing:** Workflow to publish nanopubs to the live network, keeping track of versions etc.</li></ul> |
