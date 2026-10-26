@@ -196,6 +196,7 @@ class Workspace:
             signer=SIGNER,
             ledger=self.root / "ledger.json",
             archive=self.root / "published",
+            server=None,
             query=self.query_url,
         )
         for name, value in overrides.items():
@@ -412,6 +413,34 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(publish.LIVE_QUERY, publish.query_for(None))
         self.assertIsNone(publish.query_for("http://localhost:9292/"))
 
+    def test_without_flags_the_test_pair_is_used(self):
+        """Nothing reaches the live network unless asked: by default the tool publishes to the test
+        registry and checks against the test Query instance."""
+        for name in ("DELPHI_NP_SERVER", "DELPHI_NP_QUERY"):
+            os.environ.pop(name, None)
+
+        settings = publish.settings_from(publish.parse_args(["status"]))
+
+        self.assertEqual("https://test.registry.knowledgepixels.com/", settings.server)
+        self.assertEqual("https://test.query.knowledgepixels.com/", settings.query)
+        self.assertEqual("ledger.test.registry.knowledgepixels.com.json", settings.ledger.name)
+        self.assertFalse(settings.live)
+        self.assertEqual("https://test.registry.knowledgepixels.com/", Settings().server)
+
+    def test_live_must_be_asked_for(self):
+        """--live, or the server named 'live', publishes to the live network with the live ledger."""
+        os.environ.pop("DELPHI_NP_QUERY", None)
+        for argv in (["status", "--live"], ["status", "--server", "live"]):
+            settings = publish.settings_from(publish.parse_args(argv))
+
+            self.assertTrue(settings.live, argv)
+            self.assertEqual("https://query.knowledgepixels.com/", settings.query)
+            self.assertEqual("ledger.json", settings.ledger.name)
+
+    def test_live_and_another_registry_cannot_both_be_asked_for(self):
+        """Asking for the live network and a registry at once is refused rather than guessed."""
+        self.assertEqual(2, publish.main(["status", "--live", "--server", "https://registry.example.org/"]))
+
     def test_off_the_live_network_the_query_instance_decides_the_newest_version(self):
         """Superseding on a test registry asks its Query instance, not the live network, and skips
         the key check, which only the live network can answer."""
@@ -540,8 +569,8 @@ class PublishTest(unittest.TestCase):
     def test_the_cli_publishes_drafts_and_skips_signed_files(self):
         """The publish command publishes each draft once and leaves signed files alone."""
         self.ws.draft("claim.trig")
-        args = ["--np", f"{sys.executable} {HERE / 'fake_np.py'}", "--key", str(self.ws.key), "--signer", SIGNER,
-                "--ledger", str(self.ws.root / "ledger.json")]
+        args = ["--live", "--np", f"{sys.executable} {HERE / 'fake_np.py'}", "--key", str(self.ws.key),
+                "--signer", SIGNER, "--ledger", str(self.ws.root / "ledger.json"), "--query", self.ws.query_url]
         default_archive = publish.DEFAULT_ARCHIVE
         publish.DEFAULT_ARCHIVE = self.ws.root / "published"
         os.environ["FAKE_NP_STATE"] = str(self.ws.state_file)

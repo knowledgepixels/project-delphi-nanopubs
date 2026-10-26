@@ -6,9 +6,14 @@ published, so a new version of a record supersedes the right URI without anyone 
 Everything is a command line tool, [`publish.py`](publish.py). The local web page
 (`publish.py serve`) runs the same code: one button per draft, and a list of what's published.
 
+**By default it publishes to the test network**: the test registry
+`https://test.registry.knowledgepixels.com/`, checked against the test Query instance
+`https://test.query.knowledgepixels.com/`. Nothing reaches the live network unless you pass
+`--live`, and the page then says so in red.
+
 ## How it keeps track
 
-[`ledger.json`](ledger.json) records every version published, keyed by the resource the
+[`ledger.json`](ledger.json) records every version published to the live network, keyed by the resource the
 nanopub introduces (`npx:introduces`, e.g. `https://w3id.org/delphi/resource/claim/…`). A draft
 that introduces nothing of its own is keyed by its file path instead.
 
@@ -62,12 +67,13 @@ repeated:
 |---|---|---|
 | `--signer` | `DELPHI_NP_SIGNER` | none, required to publish |
 | `--key` | `DELPHI_NP_KEY` | `~/.nanopub/id_rsa` (its public key is `<key>.pub`) |
-| `--server` | `DELPHI_NP_SERVER` | the live network |
-| `--query` | `DELPHI_NP_QUERY` | `https://query.knowledgepixels.com/`, or `test.query.<domain>` for `test.registry.<domain>` |
+| `--live` | `DELPHI_NP_SERVER=live` | off: publish to the test registry |
+| `--server` | `DELPHI_NP_SERVER` | `https://test.registry.knowledgepixels.com/` |
+| `--query` | `DELPHI_NP_QUERY` | `test.query.<domain>` for `test.registry.<domain>`; `https://query.knowledgepixels.com/` with `--live` |
 | `--np` | `DELPHI_NP` | `~/.nanopub/bin/np`, else `np` |
-| `--ledger` | | `ledger.json`, or `ledger.<host>.json` with `--server` |
+| `--ledger` | | `ledger.<host>.json`; `ledger.json` with `--live` |
 
-With `--server`, for example `https://test.registry.knowledgepixels.com/`, the tool uses a
+On the test registry (the default) or any other `--server`, the tool uses a
 separate ledger and archive (`ledger.<host>.json`, `published.<host>/`). These aren't committed,
 so test publications never end up in the live ledger. The tool then checks against the Query
 instance paired with that registry (`https://test.query.knowledgepixels.com/` for the one
@@ -96,7 +102,13 @@ export DELPHI_NP_KEY=~/.nanopub/delphi-bot_id_rsa
 python3 kg-loading/live-publishing/publish.py status kg-building/
 python3 kg-loading/live-publishing/publish.py publish --dry-run kg-building/claims/
 python3 kg-loading/live-publishing/publish.py publish kg-building/claims/egf-interacts-egfr.trig
-python3 kg-loading/live-publishing/publish.py list
+python3 kg-loading/live-publishing/publish.py list --check
+```
+
+These go to the test network. For the live network, add `--live`:
+
+```bash
+python3 kg-loading/live-publishing/publish.py publish --live kg-building/claims/
 ```
 
 `--dry-run` signs and validates without publishing anything or recording it. Validation issues

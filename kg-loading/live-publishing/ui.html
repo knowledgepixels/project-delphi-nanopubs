@@ -24,6 +24,7 @@
   h2 { font-size: 15px; margin: 32px 0 8px; }
   .settings { color: var(--muted); font-size: 13px; }
   .settings b { color: var(--fg); font-weight: 600; }
+  .settings b.live { color: var(--bad); }
   .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
   .toolbar input { flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
   .toolbar label { color: var(--muted); font-size: 13px; display: flex; gap: 4px; align-items: center; }
@@ -135,7 +136,7 @@ function render() {
   if (!state) return;
   const s = state.settings;
   document.getElementById("settings").replaceChildren(
-    "Publishing to ", el("b", {}, s.target), " as ", el("b", {}, s.signer || "— no signer set —"),
+    "Publishing to ", el("b", s.live ? { class: "live" } : {}, s.live ? "the LIVE network" : s.target), " as ", el("b", {}, s.signer || "— no signer set —"),
     " · key ", s.key, " · ledger ", s.ledger, " · checking against ", s.query || "— no Query instance —");
   const versions = state.published.reduce((n, r) => n + r.versions.length, 0);
   const missing = loaded ? Object.values(loaded).filter(v => !v).length : 0;

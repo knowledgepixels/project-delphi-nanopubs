@@ -55,6 +55,9 @@ DEFAULT_ARCHIVE = HERE / "published"
 UI_PAGE = HERE / "ui.html"
 
 LIVE_QUERY = "https://query.knowledgepixels.com/"
+TEST_REGISTRY = "https://test.registry.knowledgepixels.com/"
+TEST_QUERY = "https://test.query.knowledgepixels.com/"
+LIVE = "live"
 ADMIN_GRAPH = "http://purl.org/nanopub/admin/graph"
 ARTIFACT_CODE = "http://purl.org/nanopub/admin/artifactCode"
 READY_QUERY_STATES = {"READY", "LOADING_UPDATES"}
@@ -126,7 +129,8 @@ class Settings:
         np: the command that runs the nanopub-java CLI.
         key: the private key file to sign with; its public key is the sibling ``.pub`` file.
         signer: the IRI to sign as, e.g. the bot's IRI. Needed only to publish.
-        server: the registry to publish to, or None for the live network.
+        server: the registry to publish to, or None for the live network. The test registry by
+            default, so that nothing reaches the live network unless asked to.
         ledger: the ledger file.
         archive: the directory each published nanopub is kept in, as signed.
         check_head: whether to make sure, before superseding, that the ledger's current version
@@ -139,12 +143,12 @@ class Settings:
     np: list[str] = field(default_factory=lambda: default_np())
     key: Path = Path.home() / ".nanopub" / "id_rsa"
     signer: str | None = None
-    server: str | None = None
-    ledger: Path = DEFAULT_LEDGER
-    archive: Path = DEFAULT_ARCHIVE
+    server: str | None = TEST_REGISTRY
+    ledger: Path = field(default_factory=lambda: ledger_for(TEST_REGISTRY))
+    archive: Path = field(default_factory=lambda: archive_for(TEST_REGISTRY))
     check_head: bool = True
     check_key: bool = True
-    query: str | None = LIVE_QUERY
+    query: str | None = TEST_QUERY
 
     @property
     def live(self) -> bool:
@@ -1000,6 +1004,28 @@ def archive_for(server: str | None) -> Path:
     return HERE / f"published.{urlparse(server).hostname or 'server'}"
 
 
+def target_server(live: bool, server: str | None) -> str | None:
+    """The registry to publish to.
+
+    Args:
+        live: whether the live network was asked for.
+        server: the registry named on the command line or in the environment, ``live`` for the
+            live network, or None.
+
+    Returns:
+        None for the live network, otherwise the registry URL; the test registry when neither
+        was named.
+
+    Raises:
+        PublishError: if both the live network and a registry were named.
+    """
+    if live and server and server != LIVE:
+        raise PublishError("--live publishes to the live network, so it cannot be combined with --server")
+    if live or server == LIVE:
+        return None
+    return server or TEST_REGISTRY
+
+
 def settings_from(args: argparse.Namespace) -> Settings:
     """Build the settings from the command line, falling back to environment variables.
 
@@ -1009,7 +1035,7 @@ def settings_from(args: argparse.Namespace) -> Settings:
     Returns:
         the settings.
     """
-    server = args.server or os.environ.get("DELPHI_NP_SERVER") or None
+    server = target_server(args.live, args.server or os.environ.get("DELPHI_NP_SERVER"))
     query = args.query or os.environ.get("DELPHI_NP_QUERY") or query_for(server)
     return Settings(
         np=shlex.split(args.np or os.environ["DELPHI_NP"]) if (args.np or os.environ.get("DELPHI_NP")) else default_np(),
@@ -1122,6 +1148,7 @@ class Handler(BaseHTTPRequestHandler):
             "published": self.publisher.published(),
             "settings": {
                 "target": settings.server or "live network",
+                "live": settings.live,
                 "signer": settings.signer,
                 "key": str(settings.key),
                 "ledger": repo_path(settings.ledger),
@@ -1190,12 +1217,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--signer", help="IRI to sign as (default: $DELPHI_NP_SIGNER)")
     common.add_argument("--key", help="private key file (default: $DELPHI_NP_KEY or ~/.nanopub/id_rsa)")
-    common.add_argument("--server", help="registry to publish to instead of the live network, e.g. "
-                                         "https://test.registry.knowledgepixels.com/ (default: $DELPHI_NP_SERVER)")
-    common.add_argument("--ledger", help="ledger file (default: ledger.json, or ledger.<host>.json with --server)")
-    common.add_argument("--query", help="Query instance to check against (default: $DELPHI_NP_QUERY, else "
-                                        "query.knowledgepixels.com, or test.query.<domain> for "
-                                        "test.registry.<domain>)")
+    common.add_argument("--live", action="store_true",
+                        help="publish to the live nanopub network instead of the test registry")
+    common.add_argument("--server", help="registry to publish to (default: $DELPHI_NP_SERVER, else "
+                                         f"{TEST_REGISTRY}; 'live' means the same as --live)")
+    common.add_argument("--ledger", help="ledger file (default: ledger.<host>.json, or ledger.json with --live)")
+    common.add_argument("--query", help="Query instance to check against (default: $DELPHI_NP_QUERY, else the "
+                                        "one paired with the registry: test.query.<domain> for "
+                                        "test.registry.<domain>, query.knowledgepixels.com with --live)")
     common.add_argument("--np", help="command running the nanopub-java CLI (default: $DELPHI_NP, else "
                                      "~/.nanopub/bin/np if it exists, else np)")
     common.add_argument("--skip-head-check", action="store_true",
@@ -1229,7 +1258,11 @@ def main(argv: list[str] | None = None) -> int:
         the exit status: 0 if everything asked for was done, 1 otherwise.
     """
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    publisher = Publisher(settings_from(args))
+    try:
+        publisher = Publisher(settings_from(args))
+    except PublishError as ex:
+        print(f"error: {ex}", file=sys.stderr)
+        return 2
     if args.command == "status":
         print_status(publisher.plan(args.paths))
     elif args.command == "list":
