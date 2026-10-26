@@ -21,41 +21,47 @@
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
-  h2 { font-size: 15px; margin: 32px 0 8px; }
   .settings { color: var(--muted); font-size: 13px; }
   .settings b { color: var(--fg); font-weight: 600; }
   .settings b.live { color: var(--bad); }
-  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
-  .toolbar input { flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .tabs { display: flex; gap: 4px; margin: 20px 0 0; border-bottom: 1px solid var(--line); }
+  .tab { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; font-size: 14px; font-weight: 600; margin-bottom: -1px; }
+  .tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+  .tab .count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 6px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .tab[aria-selected="true"] .count { color: var(--fg); }
+  .panel[hidden] { display: none; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0 8px; }
+  .toolbar input[type="search"] { flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
   .toolbar label { color: var(--muted); font-size: 13px; display: flex; gap: 4px; align-items: center; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-size: 12px; color: var(--muted); font-weight: 600; }
   td.file, .uri { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  td.muted { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  td.actions { white-space: nowrap; text-align: right; }
   .state { font-size: 12px; font-weight: 600; white-space: nowrap; }
   .state.new { color: var(--new); } .state.changed { color: var(--changed); }
   .state.unchanged, .state.signed { color: var(--unchanged); }
   .state.conflict, .state.unreadable { color: var(--bad); }
   .error { color: var(--bad); font-size: 12px; margin-top: 2px; }
+  .key { color: var(--muted); font-size: 12px; word-break: break-all; }
   a { color: var(--accent); }
   button { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
   button.secondary { background: transparent; color: var(--accent); }
   button:disabled { opacity: .45; cursor: default; }
-  .record { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
-  .record .key { color: var(--muted); font-size: 12px; word-break: break-all; }
-  .record ol { margin: 6px 0 0; padding-left: 20px; }
-  .record li { font-size: 12px; color: var(--muted); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details ol { margin: 4px 0 0; padding-left: 20px; font-size: 12px; color: var(--muted); }
   .empty { color: var(--muted); padding: 12px 0; }
-  .loaded { font-weight: 600; } .loaded.yes { color: var(--new); } .loaded.no { color: var(--changed); }
+  .loaded { font-weight: 600; font-size: 12px; white-space: nowrap; } .loaded.yes { color: var(--new); } .loaded.no { color: var(--changed); }
   .loaded.unknown { color: var(--muted); font-weight: 400; }
-  #loadedNote { color: var(--muted); font-size: 13px; }
-  #message { position: sticky; top: 0; padding: 8px 12px; border-radius: 6px; margin: 8px 0; display: none; white-space: pre-wrap; font-size: 13px; }
+  #loadedNote { color: var(--muted); font-size: 13px; flex: 1; }
+  #message { position: sticky; top: 0; z-index: 1; padding: 8px 12px; border-radius: 6px; margin: 8px 0; display: none; white-space: pre-wrap; font-size: 13px; }
   #message.ok { display: block; background: var(--panel); border: 1px solid var(--new); }
   #message.fail { display: block; background: var(--panel); border: 1px solid var(--bad); }
   #message.warn { display: block; background: var(--panel); border: 1px solid var(--changed); }
   #message ul { margin: 6px 0 0; padding-left: 20px; white-space: normal; }
   #message li { color: var(--changed); }
-  @media (max-width: 700px) { td.file { display: none; } th.file { display: none; } }
+  @media (max-width: 700px) { .wide { display: none; } }
 </style>
 </head>
 <body>
@@ -64,24 +70,39 @@
   <div class="settings" id="settings">Loading…</div>
   <div id="message"></div>
 
-  <h2>Drafts</h2>
-  <div class="toolbar">
-    <input id="filter" type="search" placeholder="Filter by label or file">
-    <label><input id="hideDone" type="checkbox" checked> hide signed and unchanged</label>
-    <button class="secondary" id="reload">Reload</button>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-drafts" aria-controls="panel-drafts" data-tab="drafts">Drafts<span class="count" id="count-drafts">…</span></button>
+    <button class="tab" role="tab" id="tab-published" aria-controls="panel-published" data-tab="published">Published<span class="count" id="count-published">…</span></button>
   </div>
-  <table>
-    <thead><tr><th>State</th><th>Label</th><th class="file">File</th><th>Current version</th><th></th></tr></thead>
-    <tbody id="drafts"></tbody>
-  </table>
 
-  <h2>Published</h2>
-  <div class="toolbar"><span id="loadedNote"></span><button class="secondary" id="recheck">Check again</button></div>
-  <div id="published"></div>
+  <section class="panel" id="panel-drafts" role="tabpanel" aria-labelledby="tab-drafts">
+    <div class="toolbar">
+      <input id="filter" type="search" placeholder="Filter by label or file">
+      <label><input id="hideDone" type="checkbox" checked> hide signed and unchanged</label>
+      <button class="secondary" id="reload">Reload</button>
+    </div>
+    <table>
+      <thead><tr><th>State</th><th>Label</th><th class="wide">File</th><th>Current version</th><th></th></tr></thead>
+      <tbody id="drafts"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="panel-published" role="tabpanel" aria-labelledby="tab-published" hidden>
+    <div class="toolbar">
+      <input id="filterPublished" type="search" placeholder="Filter by label or resource">
+      <span id="loadedNote"></span>
+      <button class="secondary" id="recheck">Check again</button>
+    </div>
+    <table>
+      <thead><tr><th>Label</th><th>Current version</th><th>On the network</th><th class="wide">Published</th><th class="wide">Versions</th></tr></thead>
+      <tbody id="published"></tbody>
+    </table>
+  </section>
 </main>
 <script>
 const TOKEN = "__TOKEN__";
 const ACTION = { new: "Publish", changed: "Publish new version" };
+const TAB_KEY = "delphi-publishing-tab";
 let busy = false;
 let lastState = null;
 let loaded = null;
@@ -96,18 +117,43 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
-function link(uri) {
-  return uri ? el("a", { href: uri, target: "_blank", rel: "noopener", class: "uri" }, uri.replace("https://w3id.org/np/", "")) : "";
+function artifactCode(uri) {
+  return uri.replace(/\/+$/, "").split("/").pop();
+}
+
+function registryUrl(uri, server) {
+  return server ? server.replace(/\/*$/, "/") + "np/" + artifactCode(uri) : uri;
+}
+
+function link(uri, server) {
+  if (!uri) return "";
+  return el("a", { href: registryUrl(uri, server), target: "_blank", rel: "noopener", class: "uri", title: uri }, artifactCode(uri));
 }
 
 function show(text, ok, warnings = []) {
   const box = document.getElementById("message");
-  box.replaceChildren(text);
+  box.replaceChildren(...(Array.isArray(text) ? text : [text]));
   if (warnings.length) {
     box.append(el("div", {}, warnings.length === 1 ? "1 warning from validation:" : `${warnings.length} warnings from validation:`),
       el("ul", {}, ...warnings.map(w => el("li", {}, w))));
   }
   box.className = !ok ? "fail" : warnings.length ? "warn" : "ok";
+}
+
+function selectTab(name) {
+  for (const tab of document.querySelectorAll(".tab")) {
+    const selected = tab.dataset.tab === name;
+    tab.setAttribute("aria-selected", String(selected));
+    document.getElementById("panel-" + tab.dataset.tab).hidden = !selected;
+  }
+  if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+  try { localStorage.setItem(TAB_KEY, name); } catch (error) { }
+}
+
+function savedTab() {
+  const fromLink = location.hash.slice(1);
+  if (fromLink === "drafts" || fromLink === "published") return fromLink;
+  try { return localStorage.getItem(TAB_KEY) || "drafts"; } catch (error) { return "drafts"; }
 }
 
 async function load() {
@@ -138,11 +184,15 @@ function render() {
   document.getElementById("settings").replaceChildren(
     "Publishing to ", el("b", s.live ? { class: "live" } : {}, s.live ? "the LIVE network" : s.target), " as ", el("b", {}, s.signer || "— no signer set —"),
     " · key ", s.key, " · ledger ", s.ledger, " · checking against ", s.query || "— no Query instance —");
-  const versions = state.published.reduce((n, r) => n + r.versions.length, 0);
+  const toPublish = state.drafts.filter(d => ACTION[d.state]).length;
+  document.getElementById("count-drafts").textContent = toPublish;
+  document.getElementById("count-drafts").title = `${toPublish} to publish`;
+  document.getElementById("count-published").textContent = state.published.length;
   const missing = loaded ? Object.values(loaded).filter(v => !v).length : 0;
+  const versions = state.published.reduce((n, r) => n + r.versions.length, 0);
   document.getElementById("loadedNote").textContent = loadedError ? "Could not check: " + loadedError
-    : !loaded ? "" : !versions ? "" : missing ? `${missing} of ${versions} versions not loaded yet on ${s.query}`
-    : `All ${versions} versions are loaded on ${s.query}`;
+    : !loaded || !versions ? "" : missing ? `${missing} of ${versions} versions not loaded yet on ${s.query}`
+    : versions === 1 ? `The version is loaded on ${s.query}` : `All ${versions} versions are loaded on ${s.query}`;
   renderDrafts(state.drafts, Boolean(s.signer));
   renderPublished(state.published);
 }
@@ -154,17 +204,17 @@ function renderDrafts(drafts, canSign) {
     .filter(d => !hideDone || !["signed", "unchanged"].includes(d.state))
     .filter(d => !query || (d.label + " " + d.file).toLowerCase().includes(query))
     .map(d => {
-      const actions = el("td");
+      const actions = el("td", { class: "actions" });
       if (ACTION[d.state]) {
         actions.append(
-          el("button", { onclick: () => publish(d, false), title: d.state === "changed" ? "Supersedes " + d.current.uri : "" , ...(canSign ? {} : { disabled: "" }) }, ACTION[d.state]), " ",
+          el("button", { onclick: () => publish(d, false), title: d.state === "changed" ? "Supersedes " + d.current.uri : "", ...(canSign ? {} : { disabled: "" }) }, ACTION[d.state]), " ",
           el("button", { class: "secondary", onclick: () => publish(d, true), ...(canSign ? {} : { disabled: "" }) }, "Dry run"));
       }
       return el("tr", {},
         el("td", {}, el("span", { class: "state " + d.state }, d.state)),
         el("td", {}, d.label, d.error ? el("div", { class: "error" }, d.error) : null),
-        el("td", { class: "file" }, d.file),
-        el("td", {}, d.current ? link(d.current.uri) : ""),
+        el("td", { class: "file wide" }, d.file),
+        el("td", {}, d.current ? link(d.current.uri, d.current.server) : ""),
         actions);
     });
   document.getElementById("drafts").replaceChildren(
@@ -177,12 +227,24 @@ function loadedMark(uri) {
 }
 
 function renderPublished(records) {
-  const items = records.map(r => el("div", { class: "record" },
-    el("div", {}, el("b", {}, r.label), " · ", link(r.versions[r.versions.length - 1].uri)),
-    el("div", { class: "key" }, r.key),
-    el("ol", {}, ...r.versions.map(v => el("li", {}, v.published, " · ", link(v.uri), " · ", v.source, " · ", loadedMark(v.uri))))));
+  const query = document.getElementById("filterPublished").value.toLowerCase();
+  const rows = records
+    .filter(r => !query || (r.label + " " + r.key).toLowerCase().includes(query))
+    .map(r => {
+      const current = r.versions[r.versions.length - 1];
+      const history = r.versions.length > 1
+        ? el("details", {}, el("summary", {}, `${r.versions.length} versions`),
+            el("ol", {}, ...r.versions.map(v => el("li", {}, link(v.uri, v.server), " · ", v.published, " · ", loadedMark(v.uri)))))
+        : el("span", { class: "key" }, "1 version");
+      return el("tr", {},
+        el("td", {}, r.label, el("div", { class: "key" }, r.key)),
+        el("td", {}, link(current.uri, current.server)),
+        el("td", {}, loadedMark(current.uri)),
+        el("td", { class: "muted wide" }, current.published.replace("T", " ").replace("Z", " UTC")),
+        el("td", { class: "wide" }, history));
+    });
   document.getElementById("published").replaceChildren(
-    ...(items.length ? items : [el("div", { class: "empty" }, "Nothing published yet.")]));
+    ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 5, class: "empty" }, records.length ? "No match." : "Nothing published yet."))]));
 }
 
 async function publish(draft, dryRun) {
@@ -190,8 +252,9 @@ async function publish(draft, dryRun) {
   const verb = dryRun ? "Dry run of" : (draft.state === "changed" ? "Publish a new version of" : "Publish");
   if (!dryRun && !confirm(`${verb} "${draft.label}"?` + (draft.current ? `\n\nIt supersedes ${draft.current.uri}.` : ""))) return;
   busy = true;
-  document.querySelectorAll("button").forEach(b => b.disabled = true);
+  document.querySelectorAll("button:not(.tab)").forEach(b => b.disabled = true);
   show(`${verb} "${draft.label}"… (checking the network can take a minute)`, true);
+  let published = false;
   try {
     const response = await fetch("/api/publish", {
       method: "POST",
@@ -199,21 +262,31 @@ async function publish(draft, dryRun) {
       body: JSON.stringify({ path: draft.path, dryRun }),
     });
     const result = await response.json();
-    if (!response.ok) show(result.error, false);
-    else show(`${result.status}: ${result.uri}` + (result.supersedes ? `\nsupersedes ${result.supersedes}` : ""), true,
-      result.warnings || []);
+    if (!response.ok) {
+      show(result.error, false);
+    } else {
+      const target = result.server ? link(result.uri, result.server) : result.uri;
+      show([`${result.status}: `, target, ...(result.supersedes ? ["\nsupersedes ", link(result.supersedes, result.server)] : [])],
+        true, result.warnings || []);
+      published = result.status === "published" || result.status === "superseded";
+    }
   } catch (error) {
     show(String(error), false);
   } finally {
     busy = false;
+    if (published) selectTab("published");
     await load();
   }
 }
 
+for (const tab of document.querySelectorAll(".tab")) tab.addEventListener("click", () => selectTab(tab.dataset.tab));
 document.getElementById("reload").addEventListener("click", load);
 document.getElementById("recheck").addEventListener("click", checkLoaded);
 document.getElementById("filter").addEventListener("input", render);
+document.getElementById("filterPublished").addEventListener("input", render);
 document.getElementById("hideDone").addEventListener("change", render);
+window.addEventListener("hashchange", () => selectTab(savedTab()));
+selectTab(savedTab());
 load();
 </script>
 </body>

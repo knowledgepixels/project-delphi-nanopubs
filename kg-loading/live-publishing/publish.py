@@ -786,7 +786,7 @@ class Publisher:
             raise PublishError(f"{repo_path(path)} is already signed; publish the draft it was made from instead")
         current = self.ledger.current(draft.key)
         if current and current.fingerprint == draft.fingerprint:
-            return self.outcome("unchanged", draft, current.uri, current.supersedes)
+            return self.outcome("unchanged", draft, current.uri, current.supersedes, server=current.server)
         if not settings.signer:
             raise PublishError("no signer: pass --signer or set DELPHI_NP_SIGNER")
         pubkey = public_key(settings.key)
@@ -820,7 +820,7 @@ class Publisher:
             server=server,
             supersedes=supersedes,
         ))
-        return self.outcome("superseded" if supersedes else "published", draft, uri, supersedes, warnings)
+        return self.outcome("superseded" if supersedes else "published", draft, uri, supersedes, warnings, server)
 
     def check_can_supersede(self, current: Version, pubkey_id: str) -> None:
         """Make sure a new version can supersede the ledger's current one.
@@ -916,7 +916,7 @@ class Publisher:
 
     @staticmethod
     def outcome(status: str, draft: Draft, uri: str, supersedes: str | None,
-                warnings: list[str] | None = None) -> dict:
+                warnings: list[str] | None = None, server: str | None = None) -> dict:
         """Describe what publishing a draft did.
 
         Args:
@@ -925,12 +925,13 @@ class Publisher:
             uri: the URI of the version concerned.
             supersedes: the URI of the version it replaces, if any.
             warnings: the issues the CLI's validation found, if it ran.
+            server: the registry that holds the version, if it is published.
 
         Returns:
             the description.
         """
         return {"status": status, "key": draft.key, "label": draft.label, "uri": uri, "supersedes": supersedes,
-                "warnings": warnings or []}
+                "warnings": warnings or [], "server": server}
 
     def published(self) -> list[dict]:
         """Every record in the ledger, with all its versions, newest record first.

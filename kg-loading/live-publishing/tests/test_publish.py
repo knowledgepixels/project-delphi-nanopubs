@@ -243,6 +243,7 @@ class PublishTest(unittest.TestCase):
         versions = publisher.ledger.versions(CLAIM)
         self.assertEqual([result["uri"]], [v.uri for v in versions])
         self.assertEqual("https://registry.example.org/", versions[0].server)
+        self.assertEqual("https://registry.example.org/", result["server"])
         self.assertEqual(SIGNER, versions[0].signer)
         self.assertTrue((self.ws.root / "published" / (result["uri"].rsplit("/", 1)[-1] + ".trig")).is_file())
         self.assertEqual([result["uri"]], self.ws.state()["published"])
