@@ -61,7 +61,24 @@
   #message.warn { display: block; background: var(--panel); border: 1px solid var(--changed); }
   #message ul { margin: 6px 0 0; padding-left: 20px; white-space: normal; }
   #message li { color: var(--changed); }
-  @media (max-width: 700px) { .wide { display: none; } }
+  dialog#preview { width: min(1000px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); }
+  dialog#preview::backdrop { background: rgba(0, 0, 0, .45); }
+  .preview-head { position: sticky; top: 0; background: var(--bg); padding: 14px 18px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: flex-start; }
+  .preview-head .title { flex: 1; }
+  .preview-head .title b { font-size: 16px; }
+  .preview-body { padding: 4px 18px 18px; }
+  .graph h3 { font-size: 13px; margin: 18px 0 6px; display: flex; gap: 8px; align-items: baseline; }
+  .graph h3 .name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); font-weight: 400; }
+  .graph.assertion h3 { color: var(--accent); }
+  .graph table td { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-word; padding: 4px 8px; }
+  .graph table td.s { width: 30%; } .graph table td.p { width: 22%; }
+  .graph table tr.same td.s > * { visibility: hidden; }
+  .graph table td .literal { color: var(--new); }
+  .graph table td .bnode { color: var(--muted); }
+  .adds { margin: 14px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; }
+  .adds ul { margin: 4px 0 0; padding-left: 20px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre.source { margin: 14px 0 0; padding: 12px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; overflow: auto; max-height: 60vh; }
+  @media (max-width: 700px) { .wide { display: none; } .graph table td.s, .graph table td.p { width: auto; } }
 </style>
 </head>
 <body>
@@ -99,10 +116,22 @@
     </table>
   </section>
 </main>
+<dialog id="preview" aria-labelledby="previewTitle">
+  <div class="preview-head">
+    <div class="title"><b id="previewTitle"></b><div class="key" id="previewFile"></div></div>
+    <button class="secondary" id="previewSource">TriG source</button>
+    <button class="secondary" id="previewClose">Close</button>
+  </div>
+  <div class="preview-body" id="previewBody"></div>
+</dialog>
 <script>
 const TOKEN = "__TOKEN__";
 const ACTION = { new: "Publish", changed: "Publish new version" };
 const TAB_KEY = "delphi-publishing-tab";
+const GRAPH_TITLES = { assertion: "Assertion", provenance: "Provenance", pubinfo: "Publication info", other: "Other graph" };
+let previewData = null;
+let linkedPreview = location.hash.startsWith("#preview=") ? decodeURIComponent(location.hash.slice("#preview=".length)) : null;
+let showingSource = false;
 let busy = false;
 let lastState = null;
 let loaded = null;
@@ -160,6 +189,11 @@ async function load() {
   const response = await fetch("/api/state");
   lastState = await response.json();
   render();
+  if (linkedPreview) {
+    const draft = lastState.drafts.find(d => d.file === linkedPreview);
+    linkedPreview = null;
+    if (draft) openPreview(draft);
+  }
   await checkLoaded();
 }
 
@@ -205,6 +239,7 @@ function renderDrafts(drafts, canSign) {
     .filter(d => !query || (d.label + " " + d.file).toLowerCase().includes(query))
     .map(d => {
       const actions = el("td", { class: "actions" });
+      if (d.state !== "unreadable") actions.append(el("button", { class: "secondary", onclick: () => openPreview(d) }, "Preview"), " ");
       if (ACTION[d.state]) {
         actions.append(
           el("button", { onclick: () => publish(d, false), title: d.state === "changed" ? "Supersedes " + d.current.uri : "", ...(canSign ? {} : { disabled: "" }) }, ACTION[d.state]), " ",
@@ -247,6 +282,60 @@ function renderPublished(records) {
     ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 5, class: "empty" }, records.length ? "No match." : "Nothing published yet."))]));
 }
 
+function termCell(term) {
+  if (term.kind === "literal") return el("span", { class: "literal" }, term.text);
+  if (term.kind === "bnode") return el("span", { class: "bnode" }, term.text);
+  if (term.text.startsWith("this:") || term.text.startsWith("sub:")) return el("span", { title: term.iri }, term.text);
+  return el("a", { href: term.iri, target: "_blank", rel: "noopener", title: term.iri }, term.text);
+}
+
+function renderPreview() {
+  const data = previewData;
+  const body = document.getElementById("previewBody");
+  document.getElementById("previewSource").textContent = showingSource ? "Triples" : "TriG source";
+  const adds = data.adds.length
+    ? el("div", { class: "adds" }, "Publishing it adds to the publication info:", el("ul", {}, ...data.adds.map(a => el("li", {}, a))))
+    : null;
+  if (showingSource) {
+    body.replaceChildren(...[adds, el("pre", { class: "source" }, data.source)].filter(Boolean));
+    return;
+  }
+  const sections = data.graphs.map(graph => {
+    let previous = null;
+    const rows = graph.triples.map(t => {
+      const same = previous === t.s.text;
+      previous = t.s.text;
+      return el("tr", same ? { class: "same" } : {}, el("td", { class: "s" }, termCell(t.s)), el("td", { class: "p" }, termCell(t.p)), el("td", {}, termCell(t.o)));
+    });
+    return el("section", { class: "graph " + graph.role },
+      el("h3", {}, GRAPH_TITLES[graph.role] || graph.role, el("span", { class: "name" }, graph.name), el("span", { class: "name" }, `${graph.triples.length} triple${graph.triples.length === 1 ? "" : "s"}`)),
+      el("table", {}, el("tbody", {}, ...rows)));
+  });
+  body.replaceChildren(...[adds, ...sections].filter(Boolean));
+}
+
+async function openPreview(draft) {
+  const dialog = document.getElementById("preview");
+  document.getElementById("previewTitle").textContent = draft.label;
+  document.getElementById("previewFile").textContent = `${draft.file} · ${draft.state}`;
+  document.getElementById("previewBody").replaceChildren(el("div", { class: "empty" }, "Loading…"));
+  showingSource = false;
+  previewData = null;
+  if (!dialog.open) dialog.showModal();
+  try {
+    const response = await fetch("/api/preview?path=" + encodeURIComponent(draft.path));
+    const data = await response.json();
+    if (!response.ok) {
+      document.getElementById("previewBody").replaceChildren(el("div", { class: "error" }, data.error));
+      return;
+    }
+    previewData = data;
+    renderPreview();
+  } catch (error) {
+    document.getElementById("previewBody").replaceChildren(el("div", { class: "error" }, String(error)));
+  }
+}
+
 async function publish(draft, dryRun) {
   if (busy) return;
   const verb = dryRun ? "Dry run of" : (draft.state === "changed" ? "Publish a new version of" : "Publish");
@@ -279,6 +368,9 @@ async function publish(draft, dryRun) {
   }
 }
 
+document.getElementById("previewClose").addEventListener("click", () => document.getElementById("preview").close());
+document.getElementById("previewSource").addEventListener("click", () => { if (previewData) { showingSource = !showingSource; renderPreview(); } });
+document.getElementById("preview").addEventListener("click", event => { if (event.target.id === "preview") event.target.close(); });
 for (const tab of document.querySelectorAll(".tab")) tab.addEventListener("click", () => selectTab(tab.dataset.tab));
 document.getElementById("reload").addEventListener("click", load);
 document.getElementById("recheck").addEventListener("click", checkLoaded);
@@ -286,7 +378,7 @@ document.getElementById("filter").addEventListener("input", render);
 document.getElementById("filterPublished").addEventListener("input", render);
 document.getElementById("hideDone").addEventListener("change", render);
 window.addEventListener("hashchange", () => selectTab(savedTab()));
-selectTab(savedTab());
+selectTab(linkedPreview ? "drafts" : savedTab());
 load();
 </script>
 </body>

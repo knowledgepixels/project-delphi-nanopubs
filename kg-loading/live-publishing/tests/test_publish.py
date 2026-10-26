@@ -12,7 +12,7 @@ import urllib.request
 from urllib.parse import parse_qs, urlparse
 import re
 import warnings
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
@@ -567,6 +567,32 @@ class PublishTest(unittest.TestCase):
         self.assertEqual("EGF binds EGFR", records[0]["label"])
         self.assertEqual(2, len(records[0]["versions"]))
 
+    def test_the_preview_groups_the_triples_by_graph(self):
+        """The preview lists assertion, provenance and publication info, leaving out the head,
+        with the nanopub's own IRIs shown as this: and sub:."""
+        preview = publish.preview(self.ws.draft("claim.trig"))
+
+        self.assertEqual(["assertion", "provenance", "pubinfo"], [g["role"] for g in preview["graphs"]])
+        assertion = preview["graphs"][0]
+        self.assertEqual("sub:assertion", assertion["name"])
+        self.assertEqual(["rdf:type", "rdfs:label"], [t["p"]["text"] for t in assertion["triples"]])
+        self.assertEqual(CLAIM, assertion["triples"][0]["s"]["iri"])
+        self.assertEqual("literal", assertion["triples"][1]["o"]["kind"])
+        self.assertEqual({"this:"}, {t["s"]["text"] for t in preview["graphs"][2]["triples"]})
+        self.assertIn("sub:pubinfo", preview["source"])
+
+    def test_the_preview_says_what_publishing_adds(self):
+        """For a changed draft, the preview names the version the new one would supersede."""
+        publisher = self.ws.publisher()
+        first = publisher.publish(self.ws.draft("claim.trig"))
+
+        changed = publisher.preview(self.ws.draft("claim.trig", label="EGF binds EGFR"))
+        unchanged = publisher.preview(self.ws.draft("claim.trig"))
+
+        self.assertEqual("changed", changed["state"])
+        self.assertIn(f"npx:supersedes <{first['uri']}>", changed["adds"])
+        self.assertEqual([], unchanged["adds"])
+
     def test_the_cli_publishes_drafts_and_skips_signed_files(self):
         """The publish command publishes each draft once and leaves signed files alone."""
         self.ws.draft("claim.trig")
@@ -600,7 +626,7 @@ class ServerTest(unittest.TestCase):
             "token": "secret-token",
             "log_message": lambda *args: None,
         })
-        self.server = HTTPServer(("127.0.0.1", 0), handler)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
@@ -705,6 +731,31 @@ class ServerTest(unittest.TestCase):
 
         self.assertEqual(502, status)
         self.assertIn("not ready", answer["error"])
+
+    def test_the_page_previews_a_listed_draft(self):
+        """The preview endpoint returns a listed draft's graphs, and nothing for other files."""
+        from urllib.parse import quote
+        outside = self.ws.root / "outside.trig"
+        outside.write_text(self.draft.read_text())
+
+        status, preview = self.request("/api/preview?path=" + quote(str(self.draft.resolve())))
+        refused, answer = self.request("/api/preview?path=" + quote(str(outside)))
+
+        self.assertEqual(200, status)
+        self.assertEqual("assertion", preview["graphs"][0]["role"])
+        self.assertEqual("new", preview["state"])
+        self.assertEqual(409, refused)
+        self.assertIn("not a draft this page lists", answer["error"])
+
+    def test_an_idle_connection_does_not_hold_up_the_page(self):
+        """A connection a browser opens in advance and leaves idle does not block other requests."""
+        import socket
+        idle = socket.create_connection(("127.0.0.1", self.server.server_address[1]))
+        try:
+            with urllib.request.urlopen(self.base + "/api/state", timeout=5) as response:
+                self.assertEqual(200, response.status)
+        finally:
+            idle.close()
 
     def test_a_failure_is_reported_with_its_reason(self):
         """A refusal comes back as an error message for the page to show."""

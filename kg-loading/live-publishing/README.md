@@ -121,7 +121,7 @@ after a dry run and after a real publish, in the CLI and on the page.
 python3 kg-loading/live-publishing/publish.py serve kg-building/ --port 8765
 ```
 
-Then open <http://127.0.0.1:8765/>. The page lists the drafts with their state. **Publish**
+Then open <http://127.0.0.1:8765/>. The page lists the drafts with their state. **Preview** opens a draft's triples, grouped into assertion, provenance and publication info (with the file's own prefixes, `this:`/`sub:` for the nanopub's own IRIs, and a toggle for the TriG source), and says what publishing would add; `#preview=<file>` opens one directly. **Publish**
 (or **Publish new version**) and **Dry run** work on one draft at a time, and the page asks
 for confirmation before publishing. Below, it lists every published record with its versions.
 

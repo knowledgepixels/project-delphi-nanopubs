@@ -32,16 +32,17 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import urllib.error
 import urllib.request
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
-from rdflib import Dataset, Graph, Literal, Namespace, URIRef
+from rdflib import BNode, Dataset, Graph, Literal, Namespace, URIRef
 from rdflib.compare import to_canonical_graph
 from rdflib.namespace import DCTERMS, RDF, RDFS, XSD
 
@@ -400,6 +401,83 @@ def prepare(draft: Draft, target: Path, supersedes: str | None) -> None:
     if supersedes:
         pubinfo.add((draft.nanopub, NPX.supersedes, URIRef(supersedes)))
     dataset.serialize(destination=str(target), format="trig")
+
+
+GRAPH_ROLES = (
+    ("assertion", NP.hasAssertion),
+    ("provenance", NP.hasProvenance),
+    ("pubinfo", NP.hasPublicationInfo),
+)
+
+
+def describe_term(term, dataset: Dataset, nanopub: URIRef) -> dict:
+    """An RDF term as the preview shows it.
+
+    Args:
+        term: the term.
+        dataset: the dataset it comes from, whose prefixes shorten IRIs.
+        nanopub: the nanopub's IRI; it and the IRIs minted under it are shown as ``this:``
+            and ``sub:…``, whatever prefixes the file declares.
+
+    Returns:
+        ``text``: the term in Turtle notation, with the file's prefixes; ``kind``: ``iri``,
+        ``literal`` or ``bnode``; and, for an IRI, ``iri``: the full IRI.
+    """
+    if is_own_iri(term, nanopub):
+        rest = str(term)[len(str(nanopub).rstrip("/")):].lstrip("/")
+        return {"text": "sub:" + rest if rest else "this:", "kind": "iri", "iri": str(term)}
+    if isinstance(term, URIRef):
+        try:
+            text = dataset.namespace_manager.normalizeUri(term)
+        except Exception:
+            text = term.n3()
+        return {"text": text, "kind": "iri", "iri": str(term)}
+    if isinstance(term, BNode):
+        return {"text": "_:" + str(term)[:8], "kind": "bnode"}
+    return {"text": term.n3(dataset.namespace_manager), "kind": "literal"}
+
+
+def preview(path: Path) -> dict:
+    """A nanopub file's content, triple by triple, in its named graphs.
+
+    Args:
+        path: the file.
+
+    Returns:
+        ``graphs``: the assertion, provenance and publication info graphs, in that order,
+        each with its ``role``, ``name`` and sorted ``triples``; any other graph except the
+        head, which only links the three, comes last with the role ``other``. ``source``: the
+        file's text.
+
+    Raises:
+        PublishError: if the file holds no single nanopub.
+    """
+    dataset = load_dataset(path)
+    nanopub, _ = find_nanopub(dataset, path)
+    names = {}
+    for role, predicate in GRAPH_ROLES:
+        for s, p, o, _ in quads(dataset):
+            if s == nanopub and p == predicate:
+                names[o] = role
+    for s, p, o, g in quads(dataset):
+        if s == nanopub and p == RDF.type and o == NP.Nanopublication:
+            names.setdefault(g, "head")
+    order = ["assertion", "provenance", "pubinfo"]
+    graphs: dict[URIRef, list] = {}
+    for s, p, o, g in quads(dataset):
+        graphs.setdefault(g, []).append((s, p, o))
+    result = []
+    for name, triples in graphs.items():
+        rows = sorted(([describe_term(t, dataset, nanopub) for t in triple] for triple in triples),
+                      key=lambda row: (row[0]["text"], row[1]["kind"] != "iri" or row[1]["iri"] != str(RDF.type),
+                                       row[1]["text"], row[2]["text"]))
+        role = names.get(name, "other")
+        if role == "head":
+            continue
+        result.append({"role": role, "name": describe_term(name, dataset, nanopub)["text"],
+                       "triples": [{"s": r[0], "p": r[1], "o": r[2]} for r in rows]})
+    result.sort(key=lambda graph: order.index(graph["role"]) if graph["role"] in order else len(order))
+    return {"graphs": result, "source": path.read_text()}
 
 
 def collect_files(paths: list[Path], archive: Path) -> list[Path]:
@@ -933,6 +1011,32 @@ class Publisher:
         return {"status": status, "key": draft.key, "label": draft.label, "uri": uri, "supersedes": supersedes,
                 "warnings": warnings or [], "server": server}
 
+    def preview(self, path: Path) -> dict:
+        """A draft's content, and what publishing it would add.
+
+        Args:
+            path: the draft.
+
+        Returns:
+            what :func:`preview` returns, plus ``file``, ``label``, ``state`` and ``adds``: the
+            statements publishing would add to the publication info, as text.
+
+        Raises:
+            PublishError: if the file holds no single nanopub.
+        """
+        self.ledger = Ledger(self.settings.ledger)
+        draft = read_draft(path)
+        current = self.ledger.current(draft.key)
+        state = self.state_of(draft, current)
+        adds = []
+        if state in ("new", "changed"):
+            adds.append("dct:created set to the time of signing")
+        if state == "changed" and current:
+            adds.append(f"npx:supersedes <{current.uri}>")
+        if state in ("new", "changed"):
+            adds.append("the signature, and trusty URIs in place of the temporary ones")
+        return {**preview(path), "file": repo_path(path), "label": draft.label, "state": state, "adds": adds}
+
     def published(self) -> list[dict]:
         """Every record in the ledger, with all its versions, newest record first.
 
@@ -1081,19 +1185,37 @@ def print_published(records: list[dict], loaded: dict[str, bool] | None = None) 
 
 
 class Handler(BaseHTTPRequestHandler):
-    """Serves the web page and the JSON API it uses. Only answers on the loopback interface."""
+    """Serves the web page and the JSON API it uses. Only answers on the loopback interface.
+
+    Connections are served on threads of their own, so an idle connection a browser opens in
+    advance cannot hold up the others; everything that reads or writes the ledger takes
+    ``lock``, so two publishes never write it at once.
+    """
 
     publisher: Publisher
     paths: list[Path]
     token: str
+    lock = threading.Lock()
 
     def do_GET(self) -> None:
-        """Serve the page, or the current state as JSON."""
+        """Serve the page, or one of the API's answers."""
         if self.path == "/":
             page = UI_PAGE.read_text().replace("__TOKEN__", self.token)
             self.reply(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8")
-        elif self.path == "/api/state":
+            return
+        with self.lock:
+            self.answer_api_get()
+
+    def answer_api_get(self) -> None:
+        """Answer a GET request to the API: the state, a preview, or which versions are loaded."""
+        if self.path == "/api/state":
             self.reply_json(HTTPStatus.OK, self.state())
+        elif self.path.startswith("/api/preview?"):
+            try:
+                requested = parse_qs(urlparse(self.path).query).get("path", [""])[0]
+                self.reply_json(HTTPStatus.OK, self.publisher.preview(self.known_draft(requested)))
+            except PublishError as ex:
+                self.reply_json(HTTPStatus.CONFLICT, {"error": str(ex)})
         elif self.path == "/api/loaded":
             try:
                 uris = [v["uri"] for record in self.publisher.published() for v in record["versions"]]
@@ -1114,8 +1236,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
-            path = self.known_draft(body.get("path", ""))
-            result = self.publisher.publish(path, dry_run=bool(body.get("dryRun")))
+            with self.lock:
+                path = self.known_draft(body.get("path", ""))
+                result = self.publisher.publish(path, dry_run=bool(body.get("dryRun")))
             self.reply_json(HTTPStatus.OK, result)
         except PublishError as ex:
             self.reply_json(HTTPStatus.CONFLICT, {"error": str(ex)})
@@ -1183,8 +1306,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(publisher: Publisher, paths: list[Path], port: int) -> None:
-    """Serve the web page on localhost until interrupted. Requests are handled one at a time,
-    so two publishes never write the ledger at once.
+    """Serve the web page on localhost until interrupted.
 
     Args:
         publisher: the publisher the page's button uses.
@@ -1195,8 +1317,9 @@ def serve(publisher: Publisher, paths: list[Path], port: int) -> None:
         "publisher": publisher,
         "paths": paths,
         "token": secrets.token_urlsafe(24),
+        "lock": threading.Lock(),
     })
-    server = HTTPServer(("127.0.0.1", port), handler)
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
     print(f"Serving on http://127.0.0.1:{port}/ (publishing to {publisher.settings.server or 'the live network'})")
     try:
         server.serve_forever()
