@@ -109,6 +109,7 @@
       <input id="filterPublished" type="search" placeholder="Filter by label or resource">
       <span id="loadedNote"></span>
       <button class="secondary" id="recheck">Check again</button>
+      <button class="secondary" id="sync" title="Record the signed files that the registry already holds">Find published</button>
     </div>
     <table>
       <thead><tr><th>Label</th><th>Current version</th><th>On the network</th><th class="wide">Published</th><th class="wide">Versions</th></tr></thead>
@@ -336,6 +337,30 @@ async function openPreview(draft) {
   }
 }
 
+async function findPublished() {
+  if (busy) return;
+  busy = true;
+  document.querySelectorAll("button:not(.tab)").forEach(b => b.disabled = true);
+  show("Looking up the signed files on the registry…", true);
+  try {
+    const response = await fetch("/api/sync", { method: "POST", headers: { "X-Publish-Token": TOKEN } });
+    const result = await response.json();
+    if (!response.ok) {
+      show(result.error, false);
+    } else {
+      const parts = [`${result.added.length} signed file${result.added.length === 1 ? "" : "s"} recorded as published`];
+      if (result.missing.length) parts.push(`${result.missing.length} not on the registry`);
+      if (result.errors.length) parts.push(`${result.errors.length} failed: ` + result.errors.map(e => `${e.file}: ${e.error}`).join("; "));
+      show(parts.join(" · "), !result.errors.length);
+    }
+  } catch (error) {
+    show(String(error), false);
+  } finally {
+    busy = false;
+    await load();
+  }
+}
+
 async function publish(draft, dryRun) {
   if (busy) return;
   const verb = dryRun ? "Dry run of" : (draft.state === "changed" ? "Publish a new version of" : "Publish");
@@ -374,6 +399,7 @@ document.getElementById("preview").addEventListener("click", event => { if (even
 for (const tab of document.querySelectorAll(".tab")) tab.addEventListener("click", () => selectTab(tab.dataset.tab));
 document.getElementById("reload").addEventListener("click", load);
 document.getElementById("recheck").addEventListener("click", checkLoaded);
+document.getElementById("sync").addEventListener("click", findPublished);
 document.getElementById("filter").addEventListener("input", render);
 document.getElementById("filterPublished").addEventListener("input", render);
 document.getElementById("hideDone").addEventListener("change", render);

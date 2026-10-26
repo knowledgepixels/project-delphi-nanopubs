@@ -89,6 +89,8 @@ def sign(args: list[str]) -> None:
     signature = URIRef(trusty + "/sig")
     signed.graph(pubinfo).add((signature, NPX.hasSignature, Literal("fake")))
     signed.graph(pubinfo).add((signature, NPX.signedBy, URIRef(signer)))
+    pubkey = Path(option(args, "-k") + ".pub").read_text().strip()
+    signed.graph(pubinfo).add((signature, NPX.hasPublicKey, Literal(pubkey)))
     signed.serialize(destination=str(target), format="trig")
 
 

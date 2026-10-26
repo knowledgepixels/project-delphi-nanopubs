@@ -35,6 +35,19 @@ it applies, so drafts don't need either. Each published nanopub is kept, as sign
 **Commit `ledger.json` and `published/` after publishing, and pull before.** The ledger is
 shared state: with an old copy, the next version would supersede an old URI and fork the chain.
 
+### Nanopubs published without the tool
+
+Signed files can already be on the registry, published by hand before the tool was used.
+`sync` looks each signed file up on the registry (`<registry>/np/<artifact code>`). If the
+registry holds it and the ledger doesn't, `sync` records it as a published version, using the
+file's `dct:created` as its publication time and its signer and key. The fingerprint leaves
+out the signature, so the draft a signed file was made from then shows as `unchanged`, and the
+next changed version supersedes it. The server runs `sync` when it starts, and the page's
+**Find published** button runs it again.
+
+Run `sync` before publishing drafts that may already be out there. Otherwise a draft is
+published as `new`, next to the existing nanopub and without superseding it.
+
 ### Checks before publishing
 
 - **The signing key is declared** for the signer by an introduction nanopub. Otherwise the
@@ -102,6 +115,7 @@ export DELPHI_NP_KEY=~/.nanopub/delphi-bot_id_rsa
 python3 kg-loading/live-publishing/publish.py status kg-building/
 python3 kg-loading/live-publishing/publish.py publish --dry-run kg-building/claims/
 python3 kg-loading/live-publishing/publish.py publish kg-building/claims/egf-interacts-egfr.trig
+python3 kg-loading/live-publishing/publish.py sync examples/
 python3 kg-loading/live-publishing/publish.py list --check
 ```
 

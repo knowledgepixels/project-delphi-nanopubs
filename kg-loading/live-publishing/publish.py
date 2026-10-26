@@ -12,7 +12,8 @@ Commands::
     publish.py status  [PATH ...]          what each draft would do: new, changed, unchanged
     publish.py list                        what has been published, with every version
     publish.py publish PATH ... [--dry-run]
-    publish.py serve   [PATH ...]          local web page with the same three things
+    publish.py sync    [PATH ...]          record signed files the registry already has
+    publish.py serve   [PATH ...]          local web page with the same things
 
 Signing and publishing go through the nanopub-java CLI (``np``). See README.md.
 """
@@ -33,6 +34,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -58,6 +60,7 @@ UI_PAGE = HERE / "ui.html"
 LIVE_QUERY = "https://query.knowledgepixels.com/"
 TEST_REGISTRY = "https://test.registry.knowledgepixels.com/"
 TEST_QUERY = "https://test.query.knowledgepixels.com/"
+LIVE_REGISTRY = "https://registry.knowledgepixels.com/"
 LIVE = "live"
 ADMIN_GRAPH = "http://purl.org/nanopub/admin/graph"
 ARTIFACT_CODE = "http://purl.org/nanopub/admin/artifactCode"
@@ -280,7 +283,8 @@ def normalise(term, nanopub: URIRef):
 
 
 def fingerprint(dataset: Dataset, nanopub: URIRef, pubinfo: URIRef) -> str:
-    """Hash a nanopub's content, leaving out its creation time and what it supersedes.
+    """Hash a nanopub's content, leaving out its creation time, what it supersedes and its
+    signature, so a draft and the signed nanopub made from it hash the same.
 
     Blank nodes are labelled canonically per graph, so they do not change the hash.
 
@@ -292,9 +296,12 @@ def fingerprint(dataset: Dataset, nanopub: URIRef, pubinfo: URIRef) -> str:
     Returns:
         the hex SHA-256 of the sorted, normalised quads.
     """
+    signatures = {s for s, p, _, g in quads(dataset) if g == pubinfo and p == NPX.hasSignature}
     graphs: dict[URIRef, Graph] = {}
     for s, p, o, g in quads(dataset):
         if g == pubinfo and s == nanopub and p in VOLATILE_PUBINFO_PREDICATES:
+            continue
+        if g == pubinfo and s in signatures:
             continue
         graph = graphs.setdefault(g, Graph())
         graph.add((normalise(s, nanopub), normalise(p, nanopub), normalise(o, nanopub)))
@@ -357,6 +364,63 @@ def record_label(dataset: Dataset, nanopub: URIRef, path: Path) -> str:
         if s == nanopub and p == RDFS.label:
             return str(o)
     return path.name
+
+
+@dataclass(frozen=True)
+class SignedNanopub:
+    """A signed nanopub file, as far as recording it as published is concerned.
+
+    Attributes:
+        draft: the file read as a draft, for its key, label and fingerprint.
+        uri: its trusty URI.
+        created: its dct:created, as an xsd:dateTime in UTC, or empty if it has none.
+        signer: the IRI it is signed as.
+        pubkey: its public key, as one line of base64.
+        supersedes: the URI of the version it supersedes, if any.
+    """
+
+    draft: Draft
+    uri: str
+    created: str
+    signer: str
+    pubkey: str
+    supersedes: str | None
+
+
+def read_signed(path: Path) -> SignedNanopub:
+    """Read a signed nanopub file.
+
+    Args:
+        path: the file.
+
+    Returns:
+        the nanopub.
+
+    Raises:
+        PublishError: if the file holds no single signed nanopub.
+    """
+    draft = read_draft(path)
+    if not draft.signed:
+        raise PublishError(f"{path}: not signed")
+    dataset = load_dataset(path)
+    pubinfo = list(quads(dataset))
+
+    def value(subject, predicate) -> str:
+        return next((str(o) for s, p, o, g in pubinfo if g == draft.pubinfo and p == predicate
+                     and (subject is None or s == subject)), "")
+
+    created = value(draft.nanopub, DCTERMS.created)
+    if created:
+        created = datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+    return SignedNanopub(
+        draft=draft,
+        uri=str(draft.nanopub),
+        created=created,
+        signer=value(None, NPX.signedBy),
+        pubkey=value(None, NPX.hasPublicKey),
+        supersedes=value(draft.nanopub, NPX.supersedes) or None,
+    )
 
 
 def read_draft(path: Path) -> Draft:
@@ -582,6 +646,30 @@ class Ledger:
         record["versions"].append(asdict(version))
         self.save()
 
+    def knows(self, uri: str) -> bool:
+        """Whether a version is recorded under any record.
+
+        Args:
+            uri: the version's URI.
+
+        Returns:
+            true if it is in the ledger.
+        """
+        return any(v["uri"] == uri for record in self.records.values() for v in record.get("versions", []))
+
+    def adopt(self, key: str, label: str, version: Version) -> None:
+        """Record a version that was published without this tool, in the order of publication,
+        without saving; the newest version stays the current one.
+
+        Args:
+            key: the record key.
+            label: the record's label, used if the record is new.
+            version: the version.
+        """
+        record = self.records.setdefault(key, {"versions": [], "label": label})
+        record["versions"].append(asdict(version))
+        record["versions"].sort(key=lambda v: v["published"])
+
     def save(self) -> None:
         """Write the ledger, replacing the file only once it is completely written."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -802,6 +890,92 @@ class Publisher:
         except (urllib.error.URLError, OSError) as ex:
             raise PublishError(f"cannot ask {base}: {ex}") from ex
         return list(csv.DictReader(io.StringIO(body)))
+
+    def registry(self) -> str:
+        """The registry to look nanopubs up on.
+
+        Returns:
+            the registry being published to, or the main live registry.
+        """
+        return (self.settings.server or LIVE_REGISTRY).rstrip("/") + "/"
+
+    def on_registry(self, uri: str) -> bool:
+        """Whether the registry holds a nanopub.
+
+        Args:
+            uri: the nanopub's URI.
+
+        Returns:
+            true if the registry serves it, false if it answers that it does not have it.
+
+        Raises:
+            PublishError: if the registry cannot be asked.
+        """
+        url = self.registry() + "np/" + artifact_code(uri)
+        request = urllib.request.Request(url, headers={"Accept": "application/trig"})
+        try:
+            with self.opener(request, timeout=30) as response:
+                return response.status == 200
+        except urllib.error.HTTPError as ex:
+            if ex.code == 404:
+                return False
+            raise PublishError(f"cannot ask {url}: HTTP {ex.code}") from ex
+        except (urllib.error.URLError, OSError) as ex:
+            raise PublishError(f"cannot ask {url}: {ex}") from ex
+
+    def sync(self, paths: list[Path]) -> dict:
+        """Record the signed files among the given ones that the registry already holds but the
+        ledger does not, e.g. nanopubs signed and published by hand before this tool was used.
+
+        Args:
+            paths: files and directories to look at.
+
+        Returns:
+            ``added``: the versions recorded, each with ``file``, ``key``, ``label`` and
+            ``uri``; ``missing``: the signed files the registry does not hold; ``errors``:
+            the files that could not be read or looked up, with the reason.
+        """
+        self.ledger = Ledger(self.settings.ledger)
+        signed, errors = [], []
+        for path in collect_files(paths, self.settings.archive):
+            try:
+                if read_draft(path).signed:
+                    signed.append(read_signed(path))
+            except PublishError as ex:
+                errors.append({"file": repo_path(path), "error": str(ex)})
+        candidates = [n for n in signed if not self.ledger.knows(n.uri)]
+
+        def look_up(nanopub: SignedNanopub):
+            try:
+                return nanopub, self.on_registry(nanopub.uri), None
+            except PublishError as ex:
+                return nanopub, False, str(ex)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            answers = list(pool.map(look_up, candidates))
+        added, missing = [], []
+        for nanopub, held, error in answers:
+            file = repo_path(nanopub.draft.path)
+            if error:
+                errors.append({"file": file, "error": error})
+            elif not held:
+                missing.append({"file": file, "uri": nanopub.uri})
+            elif not self.ledger.knows(nanopub.uri):
+                self.ledger.adopt(nanopub.draft.key, nanopub.draft.label, Version(
+                    uri=nanopub.uri,
+                    fingerprint=nanopub.draft.fingerprint,
+                    published=nanopub.created or now_utc(),
+                    source=file,
+                    signer=nanopub.signer,
+                    pubkey=key_id(nanopub.pubkey) if nanopub.pubkey else "",
+                    server=self.registry(),
+                    supersedes=nanopub.supersedes,
+                ))
+                added.append({"file": file, "key": nanopub.draft.key, "label": nanopub.draft.label,
+                              "uri": nanopub.uri})
+        if added:
+            self.ledger.save()
+        return {"added": added, "missing": missing, "errors": errors}
 
     def loaded(self, uris: list[str]) -> dict[str, bool]:
         """Which of the given versions the Query instance has loaded, looked up by artifact code
@@ -1184,6 +1358,22 @@ def print_published(records: list[dict], loaded: dict[str, bool] | None = None) 
             print(f"    {version['published']}  {version['uri']}{mark}")
 
 
+def print_sync(result: dict) -> None:
+    """Print what a sync recorded and what it could not.
+
+    Args:
+        result: what :meth:`Publisher.sync` returned.
+    """
+    for item in result["added"]:
+        print(f"{'recorded':<10} {item['file']}  {item['uri']}")
+    for item in result["missing"]:
+        print(f"{'missing':<10} {item['file']}  {item['uri']} is not on the registry")
+    for item in result["errors"]:
+        print(f"{'failed':<10} {item['file']}: {item['error']}", file=sys.stderr)
+    print(f"{len(result['added'])} recorded, {len(result['missing'])} not on the registry, "
+          f"{len(result['errors'])} failed")
+
+
 class Handler(BaseHTTPRequestHandler):
     """Serves the web page and the JSON API it uses. Only answers on the loopback interface.
 
@@ -1228,11 +1418,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Publish one draft, if the request comes from the page this server served."""
-        if self.path != "/api/publish":
+        if self.path not in ("/api/publish", "/api/sync"):
             self.reply_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
         if not secrets.compare_digest(self.headers.get("X-Publish-Token", ""), self.token):
             self.reply_json(HTTPStatus.FORBIDDEN, {"error": "missing or wrong token; reload the page"})
+            return
+        if self.path == "/api/sync":
+            with self.lock:
+                self.reply_json(HTTPStatus.OK, self.publisher.sync(self.paths))
             return
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
@@ -1320,6 +1514,8 @@ def serve(publisher: Publisher, paths: list[Path], port: int) -> None:
         "lock": threading.Lock(),
     })
     server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    print(f"Looking up signed files on {publisher.registry()}…")
+    print_sync(publisher.sync(paths))
     print(f"Serving on http://127.0.0.1:{port}/ (publishing to {publisher.settings.server or 'the live network'})")
     try:
         server.serve_forever()
@@ -1366,6 +1562,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     publish = commands.add_parser("publish", parents=[common], help="sign and publish drafts")
     publish.add_argument("paths", nargs="+", type=Path)
     publish.add_argument("--dry-run", action="store_true", help="sign and validate, but publish and record nothing")
+    sync = commands.add_parser("sync", parents=[common],
+                               help="record signed files the registry already has but the ledger does not")
+    sync.add_argument("paths", nargs="*", type=Path, default=[REPO_ROOT])
     ui = commands.add_parser("serve", parents=[common], help="local web page to publish drafts one by one")
     ui.add_argument("paths", nargs="*", type=Path, default=[REPO_ROOT])
     ui.add_argument("--port", type=int, default=8765)
@@ -1401,6 +1600,10 @@ def main(argv: list[str] | None = None) -> int:
         print_published(records, loaded)
         if loaded is not None and not all(loaded.values()):
             return 1
+    elif args.command == "sync":
+        result = publisher.sync(args.paths)
+        print_sync(result)
+        return 1 if result["errors"] else 0
     elif args.command == "serve":
         serve(publisher, args.paths, args.port)
     else:

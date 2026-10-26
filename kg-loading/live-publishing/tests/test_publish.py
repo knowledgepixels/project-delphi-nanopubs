@@ -62,8 +62,9 @@ sub:pubinfo {
 
 
 class FakeQuery(BaseHTTPRequestHandler):
-    """A stand-in for a Query instance, answering from the fake CLI's state: it has loaded what
-    the fake CLI published, minus the URIs listed under ``not_loaded``."""
+    """A stand-in for a Query instance and its registry, answering from the fake CLI's state: it
+    has loaded what the fake CLI published, minus the URIs listed under ``not_loaded``; as a
+    registry, it holds what the fake CLI published plus the URIs listed under ``on_registry``."""
 
     state_file: Path
 
@@ -88,6 +89,13 @@ class FakeQuery(BaseHTTPRequestHandler):
         state = self.state()
         self.state_file.write_text(json.dumps({**state, "query_requests": state.get("query_requests", []) + [url.path]}))
         loaded = [uri for uri in state.get("published", []) if uri not in state.get("not_loaded", [])]
+        if url.path.startswith("/np/"):
+            code = url.path[len("/np/"):]
+            held = state.get("published", []) + state.get("on_registry", [])
+            self.send_response(200 if any(u.endswith("/" + code) for u in held) else 404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if url.path == "/repo/meta":
             asked = re.findall(r'"([^"]+)"', params["query"])
             body = "code\n" + "".join(code + "\n" for code in asked if any(u.endswith("/" + code) for u in loaded))
@@ -593,6 +601,93 @@ class PublishTest(unittest.TestCase):
         self.assertIn(f"npx:supersedes <{first['uri']}>", changed["adds"])
         self.assertEqual([], unchanged["adds"])
 
+    def signed_elsewhere(self, label: str = "EGF interacts with EGFR", created: str = "2026-10-20T10:00:00Z") -> Path:
+        """Sign a draft by hand, as if it had been published without this tool.
+
+        Args:
+            label: the draft's label.
+            created: its creation time.
+
+        Returns:
+            the signed file, in a ``signed`` directory next to the drafts.
+        """
+        draft = self.ws.root / "hand" / "claim.trig"
+        draft.parent.mkdir(exist_ok=True)
+        draft.write_text(DRAFT.replace("LABEL", label).replace("CREATED", created).replace("CLAIM", CLAIM))
+        signed = self.ws.drafts / "signed" / f"claim-{created[:10]}.trig"
+        signed.parent.mkdir(exist_ok=True)
+        self.ws.run([sys.executable, str(HERE / "fake_np.py"), "sign", "-k", str(self.ws.key), "-s", SIGNER,
+                     "-o", str(signed), str(draft)], capture_output=True, check=True)
+        return signed
+
+    def test_a_draft_and_its_signed_nanopub_have_the_same_fingerprint(self):
+        """The signature is left out, so a signed nanopub matches the draft it was made from."""
+        signed = publish.read_signed(self.signed_elsewhere(created="2026-10-23T13:21:59Z"))
+        draft = publish.read_draft(self.ws.draft("claim.trig"))
+
+        self.assertEqual(draft.fingerprint, signed.draft.fingerprint)
+        self.assertEqual(draft.key, signed.draft.key)
+        self.assertEqual(SIGNER, signed.signer)
+        self.assertEqual("2026-10-23T13:21:59Z", signed.created)
+
+    def test_sync_records_signed_files_the_registry_holds(self):
+        """A signed file the registry already has joins the ledger, and its draft is unchanged."""
+        signed = self.signed_elsewhere()
+        uri = publish.read_signed(signed).uri
+        self.ws.save_state({**self.ws.state(), "on_registry": [uri]})
+        self.ws.draft("claim.trig", created="2026-10-20T10:00:00Z")
+        publisher = self.ws.publisher(server=self.ws.query_url)
+
+        result = publisher.sync([self.ws.drafts])
+
+        self.assertEqual([uri], [item["uri"] for item in result["added"]])
+        version = publisher.ledger.current(CLAIM)
+        self.assertEqual(uri, version.uri)
+        self.assertEqual("2026-10-20T10:00:00Z", version.published)
+        self.assertEqual(self.ws.query_url, version.server)
+        self.assertEqual(publish.key_id(PUBKEY), version.pubkey)
+        states = {plan.path.name: plan.state for plan in publisher.plan([self.ws.drafts])}
+        self.assertEqual("unchanged", states["claim.trig"])
+
+    def test_sync_leaves_out_signed_files_the_registry_lacks(self):
+        """A signed file the registry does not hold is reported, not recorded."""
+        self.signed_elsewhere()
+        publisher = self.ws.publisher(server=self.ws.query_url)
+
+        result = publisher.sync([self.ws.drafts])
+
+        self.assertEqual([], result["added"])
+        self.assertEqual(1, len(result["missing"]))
+        self.assertIsNone(publisher.ledger.current(CLAIM))
+
+    def test_sync_records_each_version_once_and_in_order(self):
+        """Running sync again adds nothing, and an older version found later goes before the newer one."""
+        newer = publish.read_signed(self.signed_elsewhere(label="v2", created="2026-10-22T00:00:00Z")).uri
+        self.ws.save_state({**self.ws.state(), "on_registry": [newer]})
+        publisher = self.ws.publisher(server=self.ws.query_url)
+        publisher.sync([self.ws.drafts])
+        older = publish.read_signed(self.signed_elsewhere(label="v1", created="2026-10-21T00:00:00Z")).uri
+        self.ws.save_state({**self.ws.state(), "on_registry": [newer, older]})
+
+        again = publisher.sync([self.ws.drafts])
+        once_more = publisher.sync([self.ws.drafts])
+
+        self.assertEqual([older], [item["uri"] for item in again["added"]])
+        self.assertEqual([], once_more["added"])
+        self.assertEqual([older, newer], [v.uri for v in publisher.ledger.versions(CLAIM)])
+
+    def test_a_synced_version_is_superseded_by_the_next_publish(self):
+        """After sync, a changed draft supersedes the signed version that was found."""
+        signed = self.signed_elsewhere()
+        uri = publish.read_signed(signed).uri
+        self.ws.save_state({**self.ws.state(), "on_registry": [uri]})
+        publisher = self.ws.publisher(server=self.ws.query_url, check_head=False)
+        publisher.sync([self.ws.drafts])
+
+        result = publisher.publish(self.ws.draft("claim.trig", label="EGF binds EGFR"))
+
+        self.assertEqual(uri, result["supersedes"])
+
     def test_the_cli_publishes_drafts_and_skips_signed_files(self):
         """The publish command publishes each draft once and leaves signed files alone."""
         self.ws.draft("claim.trig")
@@ -756,6 +851,15 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(200, response.status)
         finally:
             idle.close()
+
+    def test_the_page_can_find_published_signed_files_with_the_token_only(self):
+        """Find published needs the page's token, and reports what it found."""
+        refused, _ = self.request("/api/sync", {}, token=None)
+        status, result = self.request("/api/sync", {})
+
+        self.assertEqual(403, refused)
+        self.assertEqual(200, status)
+        self.assertEqual({"added": [], "missing": [], "errors": []}, result)
 
     def test_a_failure_is_reported_with_its_reason(self):
         """A refusal comes back as an error message for the page to show."""
