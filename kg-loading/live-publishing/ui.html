@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delphi publishing</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #e3e3e8; --panel: #f6f6f8;
+    --accent: #2457c5; --accent-fg: #ffffff;
+    --new: #1f7a3d; --changed: #a35c00; --unchanged: #6b6b70; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --panel: #1f1f23;
+      --accent: #7aa2ff; --accent-fg: #0d1430;
+      --new: #6fd08f; --changed: #f0b45a; --unchanged: #9a9aa2; --bad: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 32px 0 8px; }
+  .settings { color: var(--muted); font-size: 13px; }
+  .settings b { color: var(--fg); font-weight: 600; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+  .toolbar input { flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .toolbar label { color: var(--muted); font-size: 13px; display: flex; gap: 4px; align-items: center; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  td.file, .uri { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  .state { font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .state.new { color: var(--new); } .state.changed { color: var(--changed); }
+  .state.unchanged, .state.signed { color: var(--unchanged); }
+  .state.conflict, .state.unreadable { color: var(--bad); }
+  .error { color: var(--bad); font-size: 12px; margin-top: 2px; }
+  a { color: var(--accent); }
+  button { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .record { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
+  .record .key { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .record ol { margin: 6px 0 0; padding-left: 20px; }
+  .record li { font-size: 12px; color: var(--muted); }
+  .empty { color: var(--muted); padding: 12px 0; }
+  #message { position: sticky; top: 0; padding: 8px 12px; border-radius: 6px; margin: 8px 0; display: none; white-space: pre-wrap; font-size: 13px; }
+  #message.ok { display: block; background: var(--panel); border: 1px solid var(--new); }
+  #message.fail { display: block; background: var(--panel); border: 1px solid var(--bad); }
+  @media (max-width: 700px) { td.file { display: none; } th.file { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Delphi publishing</h1>
+  <div class="settings" id="settings">Loading…</div>
+  <div id="message"></div>
+
+  <h2>Drafts</h2>
+  <div class="toolbar">
+    <input id="filter" type="search" placeholder="Filter by label or file">
+    <label><input id="hideDone" type="checkbox" checked> hide signed and unchanged</label>
+    <button class="secondary" id="reload">Reload</button>
+  </div>
+  <table>
+    <thead><tr><th>State</th><th>Label</th><th class="file">File</th><th>Current version</th><th></th></tr></thead>
+    <tbody id="drafts"></tbody>
+  </table>
+
+  <h2>Published</h2>
+  <div id="published"></div>
+</main>
+<script>
+const TOKEN = "__TOKEN__";
+const ACTION = { new: "Publish", changed: "Publish new version" };
+let busy = false;
+let lastState = null;
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v; else if (k.startsWith("on")) node.addEventListener(k.slice(2), v); else node.setAttribute(k, v);
+  }
+  for (const child of children) if (child != null) node.append(child);
+  return node;
+}
+
+function link(uri) {
+  return uri ? el("a", { href: uri, target: "_blank", rel: "noopener", class: "uri" }, uri.replace("https://w3id.org/np/", "")) : "";
+}
+
+function show(text, ok) {
+  const box = document.getElementById("message");
+  box.textContent = text;
+  box.className = ok ? "ok" : "fail";
+}
+
+async function load() {
+  const response = await fetch("/api/state");
+  lastState = await response.json();
+  render();
+}
+
+function render() {
+  const state = lastState;
+  if (!state) return;
+  const s = state.settings;
+  document.getElementById("settings").replaceChildren(
+    "Publishing to ", el("b", {}, s.target), " as ", el("b", {}, s.signer || "— no signer set —"),
+    " · key ", s.key, " · ledger ", s.ledger);
+  renderDrafts(state.drafts, Boolean(s.signer));
+  renderPublished(state.published);
+}
+
+function renderDrafts(drafts, canSign) {
+  const query = document.getElementById("filter").value.toLowerCase();
+  const hideDone = document.getElementById("hideDone").checked;
+  const rows = drafts
+    .filter(d => !hideDone || !["signed", "unchanged"].includes(d.state))
+    .filter(d => !query || (d.label + " " + d.file).toLowerCase().includes(query))
+    .map(d => {
+      const actions = el("td");
+      if (ACTION[d.state]) {
+        actions.append(
+          el("button", { onclick: () => publish(d, false), title: d.state === "changed" ? "Supersedes " + d.current.uri : "" , ...(canSign ? {} : { disabled: "" }) }, ACTION[d.state]), " ",
+          el("button", { class: "secondary", onclick: () => publish(d, true), ...(canSign ? {} : { disabled: "" }) }, "Dry run"));
+      }
+      return el("tr", {},
+        el("td", {}, el("span", { class: "state " + d.state }, d.state)),
+        el("td", {}, d.label, d.error ? el("div", { class: "error" }, d.error) : null),
+        el("td", { class: "file" }, d.file),
+        el("td", {}, d.current ? link(d.current.uri) : ""),
+        actions);
+    });
+  document.getElementById("drafts").replaceChildren(
+    ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Nothing to publish."))]));
+}
+
+function renderPublished(records) {
+  const items = records.map(r => el("div", { class: "record" },
+    el("div", {}, el("b", {}, r.label), " · ", link(r.versions[r.versions.length - 1].uri)),
+    el("div", { class: "key" }, r.key),
+    el("ol", {}, ...r.versions.map(v => el("li", {}, v.published, " · ", link(v.uri), " · ", v.source)))));
+  document.getElementById("published").replaceChildren(
+    ...(items.length ? items : [el("div", { class: "empty" }, "Nothing published yet.")]));
+}
+
+async function publish(draft, dryRun) {
+  if (busy) return;
+  const verb = dryRun ? "Dry run of" : (draft.state === "changed" ? "Publish a new version of" : "Publish");
+  if (!dryRun && !confirm(`${verb} "${draft.label}"?` + (draft.current ? `\n\nIt supersedes ${draft.current.uri}.` : ""))) return;
+  busy = true;
+  document.querySelectorAll("button").forEach(b => b.disabled = true);
+  show(`${verb} "${draft.label}"… (checking the network can take a minute)`, true);
+  try {
+    const response = await fetch("/api/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Publish-Token": TOKEN },
+      body: JSON.stringify({ path: draft.path, dryRun }),
+    });
+    const result = await response.json();
+    if (!response.ok) show(result.error, false);
+    else show(`${result.status}: ${result.uri}` + (result.supersedes ? `\nsupersedes ${result.supersedes}` : ""), true);
+  } catch (error) {
+    show(String(error), false);
+  } finally {
+    busy = false;
+    await load();
+  }
+}
+
+document.getElementById("reload").addEventListener("click", load);
+document.getElementById("filter").addEventListener("input", render);
+document.getElementById("hideDone").addEventListener("change", render);
+load();
+</script>
+</body>
+</html>
