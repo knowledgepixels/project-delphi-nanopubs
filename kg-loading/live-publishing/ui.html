@@ -95,7 +95,7 @@
   <section class="panel" id="panel-drafts" role="tabpanel" aria-labelledby="tab-drafts">
     <div class="toolbar">
       <input id="filter" type="search" placeholder="Filter by label or file">
-      <label><input id="hideDone" type="checkbox" checked> hide signed and unchanged</label>
+      <label title="Drafts identical to the version already published: publishing them does nothing"><input id="hideDone" type="checkbox"> hide unchanged</label>
       <button class="secondary" id="reload">Reload</button>
     </div>
     <table>
@@ -127,7 +127,15 @@
 </dialog>
 <script>
 const TOKEN = "__TOKEN__";
-const ACTION = { new: "Publish", changed: "Publish new version" };
+const ACTION = { new: "Publish", changed: "Publish new version", signed: "Publish" };
+const STATE_HELP = {
+  new: "Not published yet: publishing signs it and publishes a first version",
+  changed: "Differs from the published version: publishing signs it as a new version that supersedes it",
+  unchanged: "Identical to the version already published (ignoring dct:created and the signature): nothing to publish",
+  signed: "Signed but not published yet: publishing sends it exactly as signed",
+  conflict: "Another draft introduces the same resources",
+  unreadable: "Not a readable nanopub",
+};
 const TAB_KEY = "delphi-publishing-tab";
 const GRAPH_TITLES = { assertion: "Assertion", provenance: "Provenance", pubinfo: "Publication info", other: "Other graph" };
 let previewData = null;
@@ -236,7 +244,8 @@ function renderDrafts(drafts, canSign) {
   const query = document.getElementById("filter").value.toLowerCase();
   const hideDone = document.getElementById("hideDone").checked;
   const rows = drafts
-    .filter(d => !hideDone || !["signed", "unchanged"].includes(d.state))
+    .filter(d => d.state !== "published")
+    .filter(d => !hideDone || d.state !== "unchanged")
     .filter(d => !query || (d.label + " " + d.file).toLowerCase().includes(query))
     .map(d => {
       const actions = el("td", { class: "actions" });
@@ -247,7 +256,7 @@ function renderDrafts(drafts, canSign) {
           el("button", { class: "secondary", onclick: () => publish(d, true), ...(canSign ? {} : { disabled: "" }) }, "Dry run"));
       }
       return el("tr", {},
-        el("td", {}, el("span", { class: "state " + d.state }, d.state)),
+        el("td", {}, el("span", { class: "state " + d.state, title: STATE_HELP[d.state] || "" }, d.state === "signed" ? "signed, not published" : d.state)),
         el("td", {}, d.label, d.error ? el("div", { class: "error" }, d.error) : null),
         el("td", { class: "file wide" }, d.file),
         el("td", {}, d.current ? link(d.current.uri, d.current.server) : ""),
@@ -296,6 +305,8 @@ function renderPreview() {
   document.getElementById("previewSource").textContent = showingSource ? "Triples" : "TriG source";
   const adds = data.adds.length
     ? el("div", { class: "adds" }, "Publishing it adds to the publication info:", el("ul", {}, ...data.adds.map(a => el("li", {}, a))))
+    : data.state === "signed" ? el("div", { class: "adds" }, "Signed, not published yet: publishing sends it exactly as signed, nothing is added.")
+    : data.state === "unchanged" ? el("div", { class: "adds" }, "Identical to the version already published: there is nothing to publish.")
     : null;
   if (showingSource) {
     body.replaceChildren(...[adds, el("pre", { class: "source" }, data.source)].filter(Boolean));

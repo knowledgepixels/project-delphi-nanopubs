@@ -24,8 +24,9 @@ The comparison leaves out `dct:created` and `npx:supersedes`.
 |---|---|
 | `new` | publishes a first version |
 | `changed` | publishes a new version with `npx:supersedes` pointing at the current one |
-| `unchanged` | nothing |
-| `signed` | nothing: the file is already signed, so it isn't a draft; publish the draft it came from |
+| `unchanged` | nothing: the draft is identical to the version already published, ignoring `dct:created` and the signature |
+| `signed` | a signed file not published yet: publishes it exactly as signed, if it is the record's first version or supersedes its current one |
+| `published` | nothing: a signed file that is already published (it is in the ledger); listed under Published, not Drafts |
 | `conflict` | nothing: two drafts introduce the same resources, so it can't tell which one is the record |
 
 Before signing, the tool sets `dct:created` to the current time and adds `npx:supersedes` where

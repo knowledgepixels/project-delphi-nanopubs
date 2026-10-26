@@ -685,8 +685,9 @@ class Planned:
 
     Attributes:
         path: the file.
-        state: ``new``, ``changed``, ``unchanged``, ``signed`` (not a draft), ``conflict``
-            (another draft introduces the same resources) or ``unreadable``.
+        state: for a draft, ``new``, ``changed``, ``unchanged`` or ``conflict`` (another draft
+            introduces the same resources); for a signed file, ``signed`` (not published yet)
+            or ``published`` (in the ledger); ``unreadable`` for a file that holds no nanopub.
         draft: the draft, unless the file is unreadable.
         current: the record's current version, if it has one.
         error: why the file cannot be published, if it cannot.
@@ -750,7 +751,8 @@ class Publisher:
                 plans.append(Planned(path, "unreadable", error=str(ex)))
                 continue
             current = self.ledger.current(draft.key)
-            plans.append(Planned(path, self.state_of(draft, current), draft, current))
+            state = self.state_of(draft, current, self.ledger.knows(str(draft.nanopub)))
+            plans.append(Planned(path, state, draft, current))
         by_key: dict[str, list[Planned]] = {}
         for plan in plans:
             if plan.draft and not plan.draft.signed:
@@ -764,18 +766,20 @@ class Publisher:
         return plans
 
     @staticmethod
-    def state_of(draft: Draft, current: Version | None) -> str:
-        """What publishing a draft would do, given its record's current version.
+    def state_of(draft: Draft, current: Version | None, recorded: bool = False) -> str:
+        """What publishing a file would do, given its record's current version.
 
         Args:
-            draft: the draft.
+            draft: the file, read as a draft.
             current: the current version, or None.
+            recorded: whether the file's own URI is in the ledger, which only a signed file's can be.
 
         Returns:
-            ``signed``, ``new``, ``unchanged`` or ``changed``.
+            ``published`` or ``signed`` for a signed file, depending on whether it is recorded;
+            ``new``, ``unchanged`` or ``changed`` for a draft.
         """
         if draft.signed:
-            return "signed"
+            return "published" if recorded else "signed"
         if current is None:
             return "new"
         return "unchanged" if current.fingerprint == draft.fingerprint else "changed"
@@ -1035,7 +1039,7 @@ class Publisher:
         self.ledger = Ledger(settings.ledger)
         draft = read_draft(path)
         if draft.signed:
-            raise PublishError(f"{repo_path(path)} is already signed; publish the draft it was made from instead")
+            return self.publish_signed(path, dry_run)
         current = self.ledger.current(draft.key)
         if current and current.fingerprint == draft.fingerprint:
             return self.outcome("unchanged", draft, current.uri, current.supersedes, server=current.server)
@@ -1073,6 +1077,61 @@ class Publisher:
             supersedes=supersedes,
         ))
         return self.outcome("superseded" if supersedes else "published", draft, uri, supersedes, warnings, server)
+
+    def publish_signed(self, path: Path, dry_run: bool = False) -> dict:
+        """Publish a signed file exactly as it is, and record it.
+
+        A signed file cannot be changed without signing it again, so it can only be published
+        when it fits the ledger as it is: as the first version of its record, or as a version
+        that supersedes the record's current one.
+
+        Args:
+            path: the signed file.
+            dry_run: let the CLI validate it, but publish and record nothing.
+
+        Returns:
+            what was done, as for :meth:`publish`.
+
+        Raises:
+            PublishError: if publishing it would leave two versions of the record side by side.
+        """
+        settings = self.settings
+        signed = read_signed(path)
+        draft = signed.draft
+        if self.ledger.knows(signed.uri):
+            return self.outcome("unchanged", draft, signed.uri, signed.supersedes)
+        current = self.ledger.current(draft.key)
+        if current and signed.supersedes != current.uri:
+            raise PublishError(
+                f"{repo_path(path)} does not supersede the current version {current.uri}, so publishing it would "
+                "leave two versions of the record side by side. Publish the draft it was made from instead, which "
+                "is signed again as a version superseding the current one"
+            )
+        if current:
+            self.check_can_supersede(current, key_id(signed.pubkey))
+        if settings.live and settings.check_key and not self.is_key_declared(signed.pubkey, signed.signer):
+            raise PublishError(
+                f"no introduction declares the key {repo_path(path)} is signed with for {signed.signer}, so the "
+                "nanopub would show as published by an unknown agent"
+            )
+        output = self.run("publish", *self.publish_args(dry_run), str(path))
+        warnings = self.warnings_in(output)
+        if dry_run:
+            return self.outcome("dry-run", draft, signed.uri, signed.supersedes, warnings)
+        server = self.accepted_by(output)
+        self.archive(path, signed.uri)
+        self.ledger.add(draft.key, draft.label, Version(
+            uri=signed.uri,
+            fingerprint=draft.fingerprint,
+            published=now_utc(),
+            source=repo_path(path),
+            signer=signed.signer,
+            pubkey=key_id(signed.pubkey),
+            server=server,
+            supersedes=signed.supersedes,
+        ))
+        status = "superseded" if signed.supersedes else "published"
+        return self.outcome(status, draft, signed.uri, signed.supersedes, warnings, server)
 
     def check_can_supersede(self, current: Version, pubkey_id: str) -> None:
         """Make sure a new version can supersede the ledger's current one.
@@ -1201,7 +1260,7 @@ class Publisher:
         self.ledger = Ledger(self.settings.ledger)
         draft = read_draft(path)
         current = self.ledger.current(draft.key)
-        state = self.state_of(draft, current)
+        state = self.state_of(draft, current, self.ledger.knows(str(draft.nanopub)))
         adds = []
         if state in ("new", "changed"):
             adds.append("dct:created set to the time of signing")
@@ -1612,8 +1671,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def publish_all(publisher: Publisher, paths: list[Path], dry_run: bool) -> int:
-    """Publish every draft among the files named, printing one line per file. Signed files are
-    skipped; drafts that cannot be told apart from another draft are not published.
+    """Publish every draft and every signed file not published yet among the files named,
+    printing one line per file. Drafts that cannot be told apart from another draft are not
+    published.
 
     Args:
         publisher: the publisher.
@@ -1626,8 +1686,8 @@ def publish_all(publisher: Publisher, paths: list[Path], dry_run: bool) -> int:
     failed = False
     for plan in publisher.plan(paths):
         file = repo_path(plan.path)
-        if plan.state == "signed":
-            print(f"{'skipped':<10} {file}  already signed, not a draft")
+        if plan.state == "published":
+            print(f"{'skipped':<10} {file}  already published")
             continue
         if plan.error:
             print(f"{'failed':<10} {file}: {plan.error}", file=sys.stderr)

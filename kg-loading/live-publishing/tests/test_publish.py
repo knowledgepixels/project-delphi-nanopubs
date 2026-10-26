@@ -507,19 +507,71 @@ class PublishTest(unittest.TestCase):
         with self.assertRaisesRegex(PublishError, "cannot ask"):
             self.ws.publisher(query="http://127.0.0.1:9/").loaded(["https://w3id.org/np/RAanything"])
 
-    def test_a_signed_file_is_not_a_draft(self):
-        """An already signed file is listed as signed and refused for publishing."""
+    def test_a_published_signed_file_is_listed_as_published(self):
+        """A signed copy of a recorded version is published already, so publishing it does nothing."""
         publisher = self.ws.publisher()
-        publisher.publish(self.ws.draft("claim.trig"))
+        first = publisher.publish(self.ws.draft("claim.trig"))
         signed = next((self.ws.root / "published").iterdir())
         copy = self.ws.drafts / "signed.trig"
         copy.write_text(signed.read_text())
 
-        with self.assertRaisesRegex(PublishError, "already signed"):
-            publisher.publish(copy)
+        result = publisher.publish(copy)
+
+        self.assertEqual("unchanged", result["status"])
+        self.assertEqual(first["uri"], result["uri"])
+        self.assertEqual(1, len(self.ws.calls("publish")))
         states = {plan.path.name: plan.state for plan in publisher.plan([self.ws.drafts])}
-        self.assertEqual("signed", states["signed.trig"])
+        self.assertEqual("published", states["signed.trig"])
         self.assertEqual("unchanged", states["claim.trig"])
+
+    def test_a_signed_file_not_published_yet_is_published_as_it_is(self):
+        """A signed file the ledger does not know is published without signing it again."""
+        signed = self.signed_elsewhere()
+        uri = publish.read_signed(signed).uri
+        publisher = self.ws.publisher()
+        self.assertEqual("signed", {p.path.name: p.state for p in publisher.plan([self.ws.drafts])}[signed.name])
+        signs_before = len(self.ws.calls("sign"))
+
+        result = publisher.publish(signed)
+
+        self.assertEqual("published", result["status"])
+        self.assertEqual(uri, result["uri"])
+        self.assertEqual(signs_before, len(self.ws.calls("sign")))
+        self.assertEqual(str(signed), self.ws.calls("publish")[0][-1])
+        version = publisher.ledger.current(CLAIM)
+        self.assertEqual(uri, version.uri)
+        self.assertEqual(SIGNER, version.signer)
+        self.assertEqual("published", {p.path.name: p.state for p in publisher.plan([self.ws.drafts])}[signed.name])
+
+    def test_a_signed_file_beside_the_current_version_is_refused(self):
+        """A signed file that does not supersede the record's current version would fork it."""
+        publisher = self.ws.publisher()
+        current = publisher.publish(self.ws.draft("claim.trig"))
+        signed = self.signed_elsewhere(label="another wording")
+
+        with self.assertRaisesRegex(PublishError, "does not supersede the current version"):
+            publisher.publish(signed)
+        self.assertEqual([current["uri"]], [v.uri for v in publisher.ledger.versions(CLAIM)])
+
+    def test_a_signed_file_superseding_the_current_version_is_published(self):
+        """A signed file made as the next version is published and becomes the current one."""
+        publisher = self.ws.publisher()
+        current = publisher.publish(self.ws.draft("claim.trig"))
+        draft = self.ws.root / "hand" / "next.trig"
+        draft.parent.mkdir(exist_ok=True)
+        draft.write_text(DRAFT.replace("LABEL", "EGF binds EGFR").replace("CREATED", "2026-10-26T00:00:00Z")
+                         .replace("CLAIM", CLAIM).replace("npx:introduces <" + CLAIM + "> .",
+                                                          "npx:introduces <" + CLAIM + "> ;\n    npx:supersedes <"
+                                                          + current["uri"] + "> ."))
+        signed = self.ws.drafts / "signed-next.trig"
+        self.ws.run([sys.executable, str(HERE / "fake_np.py"), "sign", "-k", str(self.ws.key), "-s", SIGNER,
+                     "-o", str(signed), str(draft)], capture_output=True, check=True)
+
+        result = publisher.publish(signed)
+
+        self.assertEqual("superseded", result["status"])
+        self.assertEqual(current["uri"], result["supersedes"])
+        self.assertEqual(result["uri"], publisher.ledger.current(CLAIM).uri)
 
     def test_two_drafts_of_one_record_conflict(self):
         """Two drafts introducing the same claim cannot both be published."""
