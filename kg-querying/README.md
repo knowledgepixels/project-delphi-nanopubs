@@ -47,6 +47,7 @@ literal, `?_name_iri` a required IRI, and `?__name` (two underscores) an optiona
 | [`schema-overview`](queries/schema-overview.rq) | Which types and properties the Delphi records use, with example values. Run it before writing a new query |
 | [`find-concepts`](queries/find-concepts.rq) | Which concepts match a name, e.g. `EGFR`; turns a name into the IRI other queries take |
 | [`evidence-for-concept`](queries/evidence-for-concept.rq) | Which claims involve a concept, and the evidence for each |
+| [`inhibitors-of-concept`](queries/inhibitors-of-concept.rq) | Which concepts, e.g. drugs, inhibit a concept, and the evidence for each |
 
 ## Running queries
 
