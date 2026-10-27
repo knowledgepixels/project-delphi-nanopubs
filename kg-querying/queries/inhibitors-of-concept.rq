@@ -1,0 +1,74 @@
+# question: Which concepts (e.g. drugs) inhibit a given concept, and what evidence supports each claim?
+# parameters: target = the inhibited concept's IRI, e.g. https://w3id.org/delphi/resource/concept/ENSG00000146648 (EGFR)
+# notes: inhibition is RO:0002630 (directly negatively regulates) or the obsolete RO:0002408 (directly inhibits) it replaced; only current versions of claims and evidence are counted
+
+PREFIX np: <http://www.nanopub.org/nschema#>
+PREFIX npa: <http://purl.org/nanopub/admin/>
+PREFIX npx: <http://purl.org/nanopub/x/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dct: <http://purl.org/dc/terms/>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX obo: <http://purl.obolibrary.org/obo/>
+PREFIX delphi: <https://w3id.org/delphi/ontology/>
+
+SELECT ?inhibitor ?inhibitor_label ?identifier ?claim_label ?context
+       ?evidence_description
+       (group_concat(distinct str(?source); separator=" ") as ?sources_multi_val)
+       ?claim_np ?evidence_np
+WHERE {
+  GRAPH ?claimAssertion {
+    ?claim a delphi:Claim ;
+      rdf:subject ?inhibitor ;
+      rdf:predicate ?relation ;
+      rdf:object ?_target_iri ;
+      rdfs:label ?claim_label .
+    VALUES ?relation { obo:RO_0002630 obo:RO_0002408 }
+    OPTIONAL { ?claim delphi:context ?context . }
+    OPTIONAL { ?claim delphi:hasEvidence ?evidence . }
+  }
+  GRAPH npa:graph {
+    ?claim_np np:hasAssertion ?claimAssertion ;
+      npx:introduces ?claim ;
+      dct:created ?claimCreated ;
+      npa:hasValidSignatureForPublicKeyHash ?claimKey .
+    FILTER NOT EXISTS { ?claimRetraction npx:invalidates ?claim_np ; npa:hasValidSignatureForPublicKeyHash ?claimKey . }
+    FILTER NOT EXISTS {
+      ?newerClaim_np npx:introduces ?claim ;
+        dct:created ?newerClaimCreated ;
+        npa:hasValidSignatureForPublicKeyHash ?claimKey .
+      FILTER (?newerClaimCreated > ?claimCreated)
+      FILTER NOT EXISTS { ?newerClaimRetraction npx:invalidates ?newerClaim_np ; npa:hasValidSignatureForPublicKeyHash ?claimKey . }
+    }
+  }
+  OPTIONAL {
+    GRAPH ?inhibitorAssertion {
+      ?inhibitor rdfs:label ?inhibitor_label .
+      OPTIONAL { ?inhibitor skos:exactMatch ?identifier . }
+    }
+  }
+  OPTIONAL {
+    GRAPH ?evidenceAssertion {
+      ?evidence a delphi:EvidenceItem .
+      OPTIONAL { ?evidence dct:description ?evidence_description . }
+      OPTIONAL { ?evidence dct:source ?source . }
+    }
+    GRAPH npa:graph {
+      ?evidence_np np:hasAssertion ?evidenceAssertion ;
+        npx:introduces ?evidence ;
+        dct:created ?evidenceCreated ;
+        npa:hasValidSignatureForPublicKeyHash ?evidenceKey .
+      FILTER NOT EXISTS { ?evidenceRetraction npx:invalidates ?evidence_np ; npa:hasValidSignatureForPublicKeyHash ?evidenceKey . }
+      FILTER NOT EXISTS {
+        ?newerEvidence_np npx:introduces ?evidence ;
+          dct:created ?newerEvidenceCreated ;
+          npa:hasValidSignatureForPublicKeyHash ?evidenceKey .
+        FILTER (?newerEvidenceCreated > ?evidenceCreated)
+        FILTER NOT EXISTS { ?newerEvidenceRetraction npx:invalidates ?newerEvidence_np ; npa:hasValidSignatureForPublicKeyHash ?evidenceKey . }
+      }
+    }
+  }
+}
+GROUP BY ?inhibitor ?inhibitor_label ?identifier ?claim_label ?context
+         ?evidence_description ?claim_np ?evidence_np
+ORDER BY ?inhibitor_label

@@ -1,0 +1,70 @@
+# question: Which claims involve a given concept, and what evidence supports each of them?
+# parameters: concept = the concept IRI, e.g. https://w3id.org/delphi/resource/concept/ENSG00000146648 (EGFR)
+# notes: shows the current version of each claim and evidence item (newest by the same key, not retracted)
+
+PREFIX np: <http://www.nanopub.org/nschema#>
+PREFIX npa: <http://purl.org/nanopub/admin/>
+PREFIX npx: <http://purl.org/nanopub/x/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dct: <http://purl.org/dc/terms/>
+PREFIX delphi: <https://w3id.org/delphi/ontology/>
+
+SELECT ?claim ?claim_label ?predicate ?partner ?partner_label ?context
+       ?evidence ?evidence_label ?description
+       (group_concat(distinct ?source; separator=", ") as ?sources)
+       ?claim_np ?evidence_np
+WHERE {
+  {
+    GRAPH ?claimAssertion { ?claim rdf:subject ?_concept_iri ; rdf:object ?partner . }
+  } UNION {
+    GRAPH ?claimAssertion { ?claim rdf:object ?_concept_iri ; rdf:subject ?partner . }
+  }
+  GRAPH ?claimAssertion {
+    ?claim a delphi:Claim ;
+      rdfs:label ?claim_label ;
+      rdf:predicate ?predicate ;
+      delphi:hasEvidence ?evidence .
+    OPTIONAL { ?claim delphi:context ?context . }
+  }
+  GRAPH npa:graph {
+    ?claim_np np:hasAssertion ?claimAssertion ;
+      npx:introduces ?claim ;
+      dct:created ?claimCreated ;
+      npa:hasValidSignatureForPublicKeyHash ?claimKey .
+    FILTER NOT EXISTS { ?claimRetraction npx:invalidates ?claim_np ; npa:hasValidSignatureForPublicKeyHash ?claimKey . }
+    FILTER NOT EXISTS {
+      ?newerClaim_np npx:introduces ?claim ;
+        dct:created ?newerClaimCreated ;
+        npa:hasValidSignatureForPublicKeyHash ?claimKey .
+      FILTER (?newerClaimCreated > ?claimCreated)
+      FILTER NOT EXISTS { ?newerClaimRetraction npx:invalidates ?newerClaim_np ; npa:hasValidSignatureForPublicKeyHash ?claimKey . }
+    }
+  }
+  GRAPH ?evidenceAssertion {
+    ?evidence a delphi:EvidenceItem ;
+      rdfs:label ?evidence_label .
+    OPTIONAL { ?evidence dct:description ?description . }
+    OPTIONAL { ?evidence dct:source ?source . }
+  }
+  GRAPH npa:graph {
+    ?evidence_np np:hasAssertion ?evidenceAssertion ;
+      npx:introduces ?evidence ;
+      dct:created ?evidenceCreated ;
+      npa:hasValidSignatureForPublicKeyHash ?evidenceKey .
+    FILTER NOT EXISTS { ?evidenceRetraction npx:invalidates ?evidence_np ; npa:hasValidSignatureForPublicKeyHash ?evidenceKey . }
+    FILTER NOT EXISTS {
+      ?newerEvidence_np npx:introduces ?evidence ;
+        dct:created ?newerEvidenceCreated ;
+        npa:hasValidSignatureForPublicKeyHash ?evidenceKey .
+      FILTER (?newerEvidenceCreated > ?evidenceCreated)
+      FILTER NOT EXISTS { ?newerEvidenceRetraction npx:invalidates ?newerEvidence_np ; npa:hasValidSignatureForPublicKeyHash ?evidenceKey . }
+    }
+  }
+  OPTIONAL {
+    GRAPH ?partnerAssertion { ?partner a delphi:Concept ; rdfs:label ?partner_label . }
+  }
+}
+GROUP BY ?claim ?claim_label ?predicate ?partner ?partner_label ?context
+         ?evidence ?evidence_label ?description ?claim_np ?evidence_np
+ORDER BY ?claim_label

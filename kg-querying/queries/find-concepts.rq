@@ -1,0 +1,28 @@
+# question: Which concepts have a label or description containing a given text?
+# parameters: text = the text to look for, case-insensitive, e.g. EGFR or erlotinib
+# notes: use it to turn a name in a question into the concept IRI the other queries take
+
+PREFIX np: <http://www.nanopub.org/nschema#>
+PREFIX npa: <http://purl.org/nanopub/admin/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dct: <http://purl.org/dc/terms/>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX delphi: <https://w3id.org/delphi/ontology/>
+
+SELECT ?concept ?label
+       (group_concat(distinct str(?match); separator=" ") as ?matches)
+       (sample(?description) as ?description)
+WHERE {
+  GRAPH npa:graph { ?np np:hasAssertion ?assertion . }
+  GRAPH ?assertion {
+    ?concept a ?type ;
+      rdfs:label ?label .
+    VALUES ?type { delphi:Concept skos:Concept }
+    OPTIONAL { ?concept dct:description ?description . }
+    OPTIONAL { ?concept skos:exactMatch ?match . }
+  }
+  FILTER (contains(lcase(str(?label)), lcase(?_text))
+          || contains(lcase(str(coalesce(?description, ""))), lcase(?_text)))
+}
+GROUP BY ?concept ?label
+ORDER BY ?label
