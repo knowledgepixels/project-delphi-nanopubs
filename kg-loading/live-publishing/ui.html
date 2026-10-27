@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delphi publishing</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #e3e3e8; --panel: #f6f6f8;
+    --accent: #2457c5; --accent-fg: #ffffff;
+    --new: #1f7a3d; --changed: #a35c00; --unchanged: #6b6b70; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --panel: #1f1f23;
+      --accent: #7aa2ff; --accent-fg: #0d1430;
+      --new: #6fd08f; --changed: #f0b45a; --unchanged: #9a9aa2; --bad: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .settings { color: var(--muted); font-size: 13px; }
+  .settings b { color: var(--fg); font-weight: 600; }
+  .settings b.live { color: var(--bad); }
+  .tabs { display: flex; gap: 4px; margin: 20px 0 0; border-bottom: 1px solid var(--line); }
+  .tab { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; font-size: 14px; font-weight: 600; margin-bottom: -1px; }
+  .tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+  .tab .count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 6px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .tab[aria-selected="true"] .count { color: var(--fg); }
+  .panel[hidden] { display: none; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0 8px; }
+  .toolbar input[type="search"] { flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .toolbar label { color: var(--muted); font-size: 13px; display: flex; gap: 4px; align-items: center; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  td.file, .uri { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  td.muted { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  td.actions { white-space: nowrap; text-align: right; }
+  .state { font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .state.new { color: var(--new); } .state.changed { color: var(--changed); }
+  .state.unchanged, .state.signed { color: var(--unchanged); }
+  .state.conflict, .state.unreadable { color: var(--bad); }
+  .error { color: var(--bad); font-size: 12px; margin-top: 2px; }
+  .key { color: var(--muted); font-size: 12px; word-break: break-all; }
+  a { color: var(--accent); }
+  button { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details ol { margin: 4px 0 0; padding-left: 20px; font-size: 12px; color: var(--muted); }
+  .empty { color: var(--muted); padding: 12px 0; }
+  .loaded { font-weight: 600; font-size: 12px; white-space: nowrap; } .loaded.yes { color: var(--new); } .loaded.no { color: var(--changed); }
+  .loaded.unknown { color: var(--muted); font-weight: 400; }
+  #loadedNote { color: var(--muted); font-size: 13px; flex: 1; }
+  #message { position: sticky; top: 0; z-index: 1; padding: 8px 12px; border-radius: 6px; margin: 8px 0; display: none; white-space: pre-wrap; font-size: 13px; }
+  #message.ok { display: block; background: var(--panel); border: 1px solid var(--new); }
+  #message.fail { display: block; background: var(--panel); border: 1px solid var(--bad); }
+  #message.warn { display: block; background: var(--panel); border: 1px solid var(--changed); }
+  #message ul { margin: 6px 0 0; padding-left: 20px; white-space: normal; }
+  #message li { color: var(--changed); }
+  dialog#preview { width: min(1000px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); }
+  dialog#preview::backdrop { background: rgba(0, 0, 0, .45); }
+  .preview-head { position: sticky; top: 0; background: var(--bg); padding: 14px 18px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: flex-start; }
+  .preview-head .title { flex: 1; }
+  .preview-head .title b { font-size: 16px; }
+  .preview-body { padding: 4px 18px 18px; }
+  .graph h3 { font-size: 13px; margin: 18px 0 6px; display: flex; gap: 8px; align-items: baseline; }
+  .graph h3 .name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); font-weight: 400; }
+  .graph.assertion h3 { color: var(--accent); }
+  .graph table td { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-word; padding: 4px 8px; }
+  .graph table td.s { width: 30%; } .graph table td.p { width: 22%; }
+  .graph table tr.same td.s > * { visibility: hidden; }
+  .graph table td .literal { color: var(--new); }
+  .graph table td .bnode { color: var(--muted); }
+  .adds { margin: 14px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; }
+  .adds ul { margin: 4px 0 0; padding-left: 20px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre.source { margin: 14px 0 0; padding: 12px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; overflow: auto; max-height: 60vh; }
+  @media (max-width: 700px) { .wide { display: none; } .graph table td.s, .graph table td.p { width: auto; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Delphi publishing</h1>
+  <div class="settings" id="settings">Loading…</div>
+  <div id="message"></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-drafts" aria-controls="panel-drafts" data-tab="drafts">Drafts<span class="count" id="count-drafts">…</span></button>
+    <button class="tab" role="tab" id="tab-published" aria-controls="panel-published" data-tab="published">Published<span class="count" id="count-published">…</span></button>
+  </div>
+
+  <section class="panel" id="panel-drafts" role="tabpanel" aria-labelledby="tab-drafts">
+    <div class="toolbar">
+      <input id="filter" type="search" placeholder="Filter by label or file">
+      <label title="Drafts identical to the version already published: publishing them does nothing"><input id="hideDone" type="checkbox"> hide unchanged</label>
+      <button class="secondary" id="reload">Reload</button>
+    </div>
+    <table>
+      <thead><tr><th>State</th><th>Label</th><th class="wide">File</th><th>Current version</th><th></th></tr></thead>
+      <tbody id="drafts"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="panel-published" role="tabpanel" aria-labelledby="tab-published" hidden>
+    <div class="toolbar">
+      <input id="filterPublished" type="search" placeholder="Filter by label or resource">
+      <span id="loadedNote"></span>
+      <button class="secondary" id="recheck">Check again</button>
+      <button class="secondary" id="sync" title="Record the signed files that the registry already holds">Find published</button>
+    </div>
+    <table>
+      <thead><tr><th>Label</th><th>Current version</th><th>On the network</th><th class="wide">Published</th><th class="wide">Versions</th></tr></thead>
+      <tbody id="published"></tbody>
+    </table>
+  </section>
+</main>
+<dialog id="preview" aria-labelledby="previewTitle">
+  <div class="preview-head">
+    <div class="title"><b id="previewTitle"></b><div class="key" id="previewFile"></div></div>
+    <button class="secondary" id="previewSource">TriG source</button>
+    <button class="secondary" id="previewClose">Close</button>
+  </div>
+  <div class="preview-body" id="previewBody"></div>
+</dialog>
+<script>
+const TOKEN = "__TOKEN__";
+const ACTION = { new: "Publish", changed: "Publish new version", signed: "Publish" };
+const STATE_HELP = {
+  new: "Not published yet: publishing signs it and publishes a first version",
+  changed: "Differs from the published version: publishing signs it as a new version that supersedes it",
+  unchanged: "Identical to the version already published (ignoring dct:created and the signature): nothing to publish",
+  signed: "Signed but not published yet: publishing sends it exactly as signed",
+  conflict: "Another draft introduces the same resources",
+  unreadable: "Not a readable nanopub",
+};
+const TAB_KEY = "delphi-publishing-tab";
+const GRAPH_TITLES = { assertion: "Assertion", provenance: "Provenance", pubinfo: "Publication info", other: "Other graph" };
+let previewData = null;
+let linkedPreview = location.hash.startsWith("#preview=") ? decodeURIComponent(location.hash.slice("#preview=".length)) : null;
+let showingSource = false;
+let busy = false;
+let lastState = null;
+let loaded = null;
+let loadedError = null;
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v; else if (k.startsWith("on")) node.addEventListener(k.slice(2), v); else node.setAttribute(k, v);
+  }
+  for (const child of children) if (child != null) node.append(child);
+  return node;
+}
+
+function artifactCode(uri) {
+  return uri.replace(/\/+$/, "").split("/").pop();
+}
+
+function registryUrl(uri, server) {
+  return server ? server.replace(/\/*$/, "/") + "np/" + artifactCode(uri) : uri;
+}
+
+function link(uri, server) {
+  if (!uri) return "";
+  return el("a", { href: registryUrl(uri, server), target: "_blank", rel: "noopener", class: "uri", title: uri }, artifactCode(uri));
+}
+
+function show(text, ok, warnings = []) {
+  const box = document.getElementById("message");
+  box.replaceChildren(...(Array.isArray(text) ? text : [text]));
+  if (warnings.length) {
+    box.append(el("div", {}, warnings.length === 1 ? "1 warning from validation:" : `${warnings.length} warnings from validation:`),
+      el("ul", {}, ...warnings.map(w => el("li", {}, w))));
+  }
+  box.className = !ok ? "fail" : warnings.length ? "warn" : "ok";
+}
+
+function selectTab(name) {
+  for (const tab of document.querySelectorAll(".tab")) {
+    const selected = tab.dataset.tab === name;
+    tab.setAttribute("aria-selected", String(selected));
+    document.getElementById("panel-" + tab.dataset.tab).hidden = !selected;
+  }
+  if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+  try { localStorage.setItem(TAB_KEY, name); } catch (error) { }
+}
+
+function savedTab() {
+  const fromLink = location.hash.slice(1);
+  if (fromLink === "drafts" || fromLink === "published") return fromLink;
+  try { return localStorage.getItem(TAB_KEY) || "drafts"; } catch (error) { return "drafts"; }
+}
+
+async function load() {
+  const response = await fetch("/api/state");
+  lastState = await response.json();
+  render();
+  if (linkedPreview) {
+    const draft = lastState.drafts.find(d => d.file === linkedPreview);
+    linkedPreview = null;
+    if (draft) openPreview(draft);
+  }
+  await checkLoaded();
+}
+
+async function checkLoaded() {
+  loadedError = null;
+  document.getElementById("loadedNote").textContent = "Asking the Query instance which versions it has…";
+  try {
+    const response = await fetch("/api/loaded");
+    const result = await response.json();
+    if (response.ok) loaded = result.loaded; else { loaded = null; loadedError = result.error; }
+  } catch (error) {
+    loaded = null;
+    loadedError = String(error);
+  }
+  render();
+}
+
+function render() {
+  const state = lastState;
+  if (!state) return;
+  const s = state.settings;
+  document.getElementById("settings").replaceChildren(
+    "Publishing to ", el("b", s.live ? { class: "live" } : {}, s.live ? "the LIVE network" : s.target), " as ", el("b", {}, s.signer || "— no signer set —"),
+    " · key ", s.key, " · ledger ", s.ledger, " · checking against ", s.query || "— no Query instance —");
+  const toPublish = state.drafts.filter(d => ACTION[d.state]).length;
+  document.getElementById("count-drafts").textContent = toPublish;
+  document.getElementById("count-drafts").title = `${toPublish} to publish`;
+  document.getElementById("count-published").textContent = state.published.length;
+  const missing = loaded ? Object.values(loaded).filter(v => !v).length : 0;
+  const versions = state.published.reduce((n, r) => n + r.versions.length, 0);
+  document.getElementById("loadedNote").textContent = loadedError ? "Could not check: " + loadedError
+    : !loaded || !versions ? "" : missing ? `${missing} of ${versions} versions not loaded yet on ${s.query}`
+    : versions === 1 ? `The version is loaded on ${s.query}` : `All ${versions} versions are loaded on ${s.query}`;
+  renderDrafts(state.drafts, Boolean(s.signer));
+  renderPublished(state.published);
+}
+
+function renderDrafts(drafts, canSign) {
+  const query = document.getElementById("filter").value.toLowerCase();
+  const hideDone = document.getElementById("hideDone").checked;
+  const rows = drafts
+    .filter(d => d.state !== "published")
+    .filter(d => !hideDone || d.state !== "unchanged")
+    .filter(d => !query || (d.label + " " + d.file).toLowerCase().includes(query))
+    .map(d => {
+      const actions = el("td", { class: "actions" });
+      if (d.state !== "unreadable") actions.append(el("button", { class: "secondary", onclick: () => openPreview(d) }, "Preview"), " ");
+      if (ACTION[d.state]) {
+        actions.append(
+          el("button", { onclick: () => publish(d, false), title: d.state === "changed" ? "Supersedes " + d.current.uri : "", ...(canSign ? {} : { disabled: "" }) }, ACTION[d.state]), " ",
+          el("button", { class: "secondary", onclick: () => publish(d, true), ...(canSign ? {} : { disabled: "" }) }, "Dry run"));
+      }
+      return el("tr", {},
+        el("td", {}, el("span", { class: "state " + d.state, title: STATE_HELP[d.state] || "" }, d.state === "signed" ? "signed, not published" : d.state)),
+        el("td", {}, d.label, d.error ? el("div", { class: "error" }, d.error) : null),
+        el("td", { class: "file wide" }, d.file),
+        el("td", {}, d.current ? link(d.current.uri, d.current.server) : ""),
+        actions);
+    });
+  document.getElementById("drafts").replaceChildren(
+    ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Nothing to publish."))]));
+}
+
+function loadedMark(uri) {
+  if (!loaded || !(uri in loaded)) return el("span", { class: "loaded unknown" }, loadedError ? "not checked" : "checking…");
+  return loaded[uri] ? el("span", { class: "loaded yes" }, "✓ loaded") : el("span", { class: "loaded no" }, "not loaded yet");
+}
+
+function renderPublished(records) {
+  const query = document.getElementById("filterPublished").value.toLowerCase();
+  const rows = records
+    .filter(r => !query || (r.label + " " + r.key).toLowerCase().includes(query))
+    .map(r => {
+      const current = r.versions[r.versions.length - 1];
+      const history = r.versions.length > 1
+        ? el("details", {}, el("summary", {}, `${r.versions.length} versions`),
+            el("ol", {}, ...r.versions.map(v => el("li", {}, link(v.uri, v.server), " · ", v.published, " · ", loadedMark(v.uri)))))
+        : el("span", { class: "key" }, "1 version");
+      return el("tr", {},
+        el("td", {}, r.label, el("div", { class: "key" }, r.key)),
+        el("td", {}, link(current.uri, current.server)),
+        el("td", {}, loadedMark(current.uri)),
+        el("td", { class: "muted wide" }, current.published.replace("T", " ").replace("Z", " UTC")),
+        el("td", { class: "wide" }, history));
+    });
+  document.getElementById("published").replaceChildren(
+    ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 5, class: "empty" }, records.length ? "No match." : "Nothing published yet."))]));
+}
+
+function termCell(term) {
+  if (term.kind === "literal") return el("span", { class: "literal" }, term.text);
+  if (term.kind === "bnode") return el("span", { class: "bnode" }, term.text);
+  if (term.text.startsWith("this:") || term.text.startsWith("sub:")) return el("span", { title: term.iri }, term.text);
+  return el("a", { href: term.iri, target: "_blank", rel: "noopener", title: term.iri }, term.text);
+}
+
+function renderPreview() {
+  const data = previewData;
+  const body = document.getElementById("previewBody");
+  document.getElementById("previewSource").textContent = showingSource ? "Triples" : "TriG source";
+  const adds = data.adds.length
+    ? el("div", { class: "adds" }, "Publishing it adds to the publication info:", el("ul", {}, ...data.adds.map(a => el("li", {}, a))))
+    : data.state === "signed" ? el("div", { class: "adds" }, "Signed, not published yet: publishing sends it exactly as signed, nothing is added.")
+    : data.state === "unchanged" ? el("div", { class: "adds" }, "Identical to the version already published: there is nothing to publish.")
+    : null;
+  if (showingSource) {
+    body.replaceChildren(...[adds, el("pre", { class: "source" }, data.source)].filter(Boolean));
+    return;
+  }
+  const sections = data.graphs.map(graph => {
+    let previous = null;
+    const rows = graph.triples.map(t => {
+      const same = previous === t.s.text;
+      previous = t.s.text;
+      return el("tr", same ? { class: "same" } : {}, el("td", { class: "s" }, termCell(t.s)), el("td", { class: "p" }, termCell(t.p)), el("td", {}, termCell(t.o)));
+    });
+    return el("section", { class: "graph " + graph.role },
+      el("h3", {}, GRAPH_TITLES[graph.role] || graph.role, el("span", { class: "name" }, graph.name), el("span", { class: "name" }, `${graph.triples.length} triple${graph.triples.length === 1 ? "" : "s"}`)),
+      el("table", {}, el("tbody", {}, ...rows)));
+  });
+  body.replaceChildren(...[adds, ...sections].filter(Boolean));
+}
+
+async function openPreview(draft) {
+  const dialog = document.getElementById("preview");
+  document.getElementById("previewTitle").textContent = draft.label;
+  document.getElementById("previewFile").textContent = `${draft.file} · ${draft.state}`;
+  document.getElementById("previewBody").replaceChildren(el("div", { class: "empty" }, "Loading…"));
+  showingSource = false;
+  previewData = null;
+  if (!dialog.open) dialog.showModal();
+  try {
+    const response = await fetch("/api/preview?path=" + encodeURIComponent(draft.path));
+    const data = await response.json();
+    if (!response.ok) {
+      document.getElementById("previewBody").replaceChildren(el("div", { class: "error" }, data.error));
+      return;
+    }
+    previewData = data;
+    renderPreview();
+  } catch (error) {
+    document.getElementById("previewBody").replaceChildren(el("div", { class: "error" }, String(error)));
+  }
+}
+
+async function findPublished() {
+  if (busy) return;
+  busy = true;
+  document.querySelectorAll("button:not(.tab)").forEach(b => b.disabled = true);
+  show("Looking up the signed files on the registry…", true);
+  try {
+    const response = await fetch("/api/sync", { method: "POST", headers: { "X-Publish-Token": TOKEN } });
+    const result = await response.json();
+    if (!response.ok) {
+      show(result.error, false);
+    } else {
+      const parts = [`${result.added.length} signed file${result.added.length === 1 ? "" : "s"} recorded as published`];
+      if (result.missing.length) parts.push(`${result.missing.length} not on the registry`);
+      if (result.errors.length) parts.push(`${result.errors.length} failed: ` + result.errors.map(e => `${e.file}: ${e.error}`).join("; "));
+      show(parts.join(" · "), !result.errors.length);
+    }
+  } catch (error) {
+    show(String(error), false);
+  } finally {
+    busy = false;
+    await load();
+  }
+}
+
+async function publish(draft, dryRun) {
+  if (busy) return;
+  const verb = dryRun ? "Dry run of" : (draft.state === "changed" ? "Publish a new version of" : "Publish");
+  if (!dryRun && !confirm(`${verb} "${draft.label}"?` + (draft.current ? `\n\nIt supersedes ${draft.current.uri}.` : ""))) return;
+  busy = true;
+  document.querySelectorAll("button:not(.tab)").forEach(b => b.disabled = true);
+  show(`${verb} "${draft.label}"… (checking the network can take a minute)`, true);
+  let published = false;
+  try {
+    const response = await fetch("/api/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Publish-Token": TOKEN },
+      body: JSON.stringify({ path: draft.path, dryRun }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      show(result.error, false);
+    } else {
+      const target = result.server ? link(result.uri, result.server) : result.uri;
+      show([`${result.status}: `, target, ...(result.supersedes ? ["\nsupersedes ", link(result.supersedes, result.server)] : [])],
+        true, result.warnings || []);
+      published = result.status === "published" || result.status === "superseded";
+    }
+  } catch (error) {
+    show(String(error), false);
+  } finally {
+    busy = false;
+    if (published) selectTab("published");
+    await load();
+  }
+}
+
+document.getElementById("previewClose").addEventListener("click", () => document.getElementById("preview").close());
+document.getElementById("previewSource").addEventListener("click", () => { if (previewData) { showingSource = !showingSource; renderPreview(); } });
+document.getElementById("preview").addEventListener("click", event => { if (event.target.id === "preview") event.target.close(); });
+for (const tab of document.querySelectorAll(".tab")) tab.addEventListener("click", () => selectTab(tab.dataset.tab));
+document.getElementById("reload").addEventListener("click", load);
+document.getElementById("recheck").addEventListener("click", checkLoaded);
+document.getElementById("sync").addEventListener("click", findPublished);
+document.getElementById("filter").addEventListener("input", render);
+document.getElementById("filterPublished").addEventListener("input", render);
+document.getElementById("hideDone").addEventListener("change", render);
+window.addEventListener("hashchange", () => selectTab(savedTab()));
+selectTab(linkedPreview ? "drafts" : savedTab());
+load();
+</script>
+</body>
+</html>

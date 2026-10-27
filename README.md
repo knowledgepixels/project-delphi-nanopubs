@@ -16,7 +16,7 @@ This repository is the home of the project's nanopublication work.
 | [`ontology`](https://github.com/fractastical/project-delphi-ontology/blob/main/delphi.ttl) (external) | The Project Delphi ontology the records use, documented in [`ONTOLOGY.md`](https://github.com/fractastical/project-delphi-ontology/blob/main/ONTOLOGY.md) |
 | [`retrieval`](retrieval/)| Tools to load existing relevant databases / Knowledge Graphs |
 | [`kg-building`](kg-building/) | Tools for making RDF/nanopubs out of the data |
-| [`kg-loading`](kg-loading/) | Variants to keep it flexible during the hackathon:<ul><li>**triplestore:** Plain (non-nanopub-aware) triple store, for fast roundtripping</li><li>**nanopub-stack:** Local stack of Registry/Query to load nanopubs</li><li>**live-publishing:** Workflow to publish nanopubs to the live network, keeping track of versions etc.</li></ul> |
+| [`kg-loading`](kg-loading/) | Variants to keep it flexible during the hackathon:<ul><li>**triplestore:** Plain (non-nanopub-aware) triple store, for fast roundtripping</li><li>**nanopub-stack:** Local stack of Registry/Query to load nanopubs</li><li>**[live-publishing](kg-loading/live-publishing/):** Workflow to publish nanopubs to the live network, keeping track of versions etc. (CLI and a local web page)</li></ul> |
 | [`kg-querying`](kg-querying/) | Creating and storing queries and query templates |
 
 ## Agent skills
