@@ -64,7 +64,8 @@ published as `new`, next to the existing nanopub and without superseding it.
 
 ## Requirements
 
-- Python 3.10 or later with `rdflib` (`pip install -r requirements.txt`)
+- [uv](https://docs.astral.sh/uv/). `publish.py` declares its Python version (3.10 or later) and
+  its dependency (`rdflib`) inline, so `uv run` sets up both on first use.
 - The [nanopub-java](https://github.com/Nanopublication/nanopub-java) CLI, 1.95.0 or later.
   By default the tool runs `~/.nanopub/bin/np` if it exists, else `np`. nanopub-py also
   installs a command called `np`, so if that one comes first on your path, set `DELPHI_NP`
@@ -113,17 +114,17 @@ Run from anywhere; paths can be files or directories (searched for `*.trig`). Wi
 export DELPHI_NP_SIGNER=https://w3id.org/np/RA…/delphi-bot
 export DELPHI_NP_KEY=~/.nanopub/delphi-bot_id_rsa
 
-python3 kg-loading/live-publishing/publish.py status kg-building/
-python3 kg-loading/live-publishing/publish.py publish --dry-run kg-building/claims/
-python3 kg-loading/live-publishing/publish.py publish kg-building/claims/egf-interacts-egfr.trig
-python3 kg-loading/live-publishing/publish.py sync examples/
-python3 kg-loading/live-publishing/publish.py list --check
+uv run kg-loading/live-publishing/publish.py status kg-building/
+uv run kg-loading/live-publishing/publish.py publish --dry-run kg-building/claims/
+uv run kg-loading/live-publishing/publish.py publish kg-building/claims/egf-interacts-egfr.trig
+uv run kg-loading/live-publishing/publish.py sync examples/
+uv run kg-loading/live-publishing/publish.py list --check
 ```
 
 These go to the test network. For the live network, add `--live`:
 
 ```bash
-python3 kg-loading/live-publishing/publish.py publish --live kg-building/claims/
+uv run kg-loading/live-publishing/publish.py publish --live kg-building/claims/
 ```
 
 `--dry-run` signs and validates without publishing anything or recording it. Validation issues
@@ -133,7 +134,7 @@ after a dry run and after a real publish, in the CLI and on the page.
 ### Web page
 
 ```bash
-python3 kg-loading/live-publishing/publish.py serve kg-building/ --port 8765
+uv run kg-loading/live-publishing/publish.py serve kg-building/ --port 8765
 ```
 
 Then open <http://127.0.0.1:8765/>. The page lists the drafts with their state. **Preview** opens a draft's triples, grouped into assertion, provenance and publication info (with the file's own prefixes, `this:`/`sub:` for the nanopub's own IRIs, and a toggle for the TriG source), and says what publishing would add; `#preview=<file>` opens one directly. **Publish**
@@ -147,7 +148,7 @@ trigger a publish.
 ## Tests
 
 ```bash
-cd kg-loading/live-publishing && python3 -m unittest discover -s tests
+cd kg-loading/live-publishing && uv run --with "rdflib>=6" python -m unittest discover -s tests
 ```
 
 The tests use a fake `np` ([`tests/fake_np.py`](tests/fake_np.py)), so they don't need the

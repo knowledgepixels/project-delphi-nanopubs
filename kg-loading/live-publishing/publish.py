@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["rdflib>=6"]
+# ///
 """Publish Project Delphi nanopub drafts and keep track of what has been published.
 
 Every published nanopub is recorded in a ledger (``ledger.json`` next to this script), keyed by
