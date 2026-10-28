@@ -17,7 +17,7 @@ This repository is the home of the project's nanopublication work.
 | [`retrieval`](retrieval/)| Tools to load existing relevant databases / Knowledge Graphs |
 | [`kg-building`](kg-building/) | Tools for making RDF/nanopubs out of the data |
 | [`kg-loading`](kg-loading/) | Variants to keep it flexible during the hackathon:<ul><li>**triplestore:** Plain (non-nanopub-aware) triple store, for fast roundtripping</li><li>**nanopub-stack:** Local stack of Registry/Query to load nanopubs</li><li>**live-publishing:** Workflow to publish nanopubs to the live network, keeping track of versions etc.</li></ul> |
-| [`kg-querying`](kg-querying/) | Creating and storing queries and query templates |
+| [`kg-querying`](kg-querying/) | Asking the graph questions in natural language: stored SPARQL queries and their saved results |
 
 ## Agent skills
 
@@ -26,7 +26,7 @@ compatible agent.
 
 | Skill | Purpose |
 |---|---|
-| [`delphi`](skills/delphi/SKILL.md) | What is settled (Delphi namespace and claim templates, external identifiers, publishing by a bot) and the scientific rules every record follows. The data model is still open: the agent proposes anything else to the user rather than inventing it, and records agreed choices in `DECISIONS.md`. |
+| [`delphi`](skills/delphi/SKILL.md) | Answering questions about the graph with stored SPARQL queries ([`references/querying.md`](skills/delphi/references/querying.md)). What is settled (Delphi namespace and claim templates, external identifiers, publishing by a bot) and the scientific rules every record follows. The data model is still open: the agent proposes anything else to the user rather than inventing it, and records agreed choices in `DECISIONS.md`. |
 
 ### Requirements
 

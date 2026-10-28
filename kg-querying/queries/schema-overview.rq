@@ -1,0 +1,14 @@
+# question: Which types and properties do the Delphi records use, how often, and with what example values?
+# notes: run this first when writing a new query, to see the data model as published rather than as assumed
+
+PREFIX np: <http://www.nanopub.org/nschema#>
+PREFIX npa: <http://purl.org/nanopub/admin/>
+
+SELECT ?type ?property (count(*) as ?uses) (sample(?value) as ?example)
+WHERE {
+  GRAPH npa:graph { ?np np:hasAssertion ?assertion . }
+  GRAPH ?assertion { ?subject a ?type ; ?property ?value . }
+  FILTER (strstarts(str(?subject), "https://w3id.org/delphi/"))
+}
+GROUP BY ?type ?property
+ORDER BY ?type ?property
