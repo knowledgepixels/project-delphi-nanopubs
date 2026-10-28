@@ -1,5 +1,5 @@
 # question: Which concepts have a label or description containing a given text?
-# parameters: text = the text to look for, case-insensitive, e.g. EGFR or erlotinib
+# parameters: text = the text to look for, case-insensitive, e.g. a gene or drug name
 # notes: use it to turn a name in a question into the concept IRI the other queries take
 
 PREFIX np: <http://www.nanopub.org/nschema#>

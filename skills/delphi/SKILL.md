@@ -2,7 +2,7 @@
 name: delphi
 description: "Build and use the Project Delphi knowledge graph as nanopublications — core-science concepts linked to an EGFR→ERK subgraph in A431 cells, with reusable cell programs. Use for anything Delphi: adding a source or model to the graph, recording claims and their evidence, defining vocabulary or templates, defining or verifying programs, querying the graph, or preparing a release."
 license: MIT
-compatibility: Requires the nanopub skill, the nanopub-java CLI (np) with Java, uv for querying, and network access to fetch sources and query the graph.
+compatibility: Requires the nanopub skill, the nanopub-java CLI (np) with Java, curl, and network access to fetch sources and query the graph.
 metadata:
   author: knowledgepixels
   version: "0.3.0"
@@ -42,8 +42,8 @@ Nanopub mechanics come from the `nanopub` skill; load it too.
 
 When the user asks a question about the graph in plain language, follow
 [references/querying.md](references/querying.md): reuse or write a stored SPARQL query in
-`kg-querying/queries/`, run it with `uv run kg-querying/query.py run`, and answer from the rows
-it returns, never from memory.
+`kg-querying/queries/`, run it against Nanopub Query as the `nanopub` skill describes, and
+answer from the rows it returns, never from memory.
 
 ## Not settled
 
