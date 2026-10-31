@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the nanopub skill, the nanopub-java CLI (np) with Java, and network access to fetch sources.
 metadata:
   author: knowledgepixels
-  version: "0.2.1"
+  version: "0.3.0"
 ---
 
 # Project Delphi
@@ -28,6 +28,13 @@ Nanopub mechanics come from the `nanopub` skill; load it too.
   claim template, with free-text context in `delphi:context`. Their evidence is
   `delphi:EvidenceItem`, linked with `delphi:hasEvidence` and created with the Project Delphi
   evidence item template. Referenced entities such as genes or drugs are `delphi:Concept`.
+- Claims and evidence items must be created with these template versions, which use only
+  ontology v2.0 terms, and must declare them in `nt:wasCreatedFromTemplate`:
+  - claim: <https://w3id.org/np/RAzvNtXMF1BMBsNyhsUaXMA0GSPcHgnQRy57uCGyN9QWQ>
+  - evidence item: <https://w3id.org/np/RAP9tVGTyoRf_9Pb4OJ2ldww5AFVcuTfRilAv8EAWzUC4>
+
+  Earlier versions of these templates use the legacy `probknow` terms, so a record in v2.0
+  terms cannot truthfully declare them.
 - Deprecated terms are not used in new records: `delphi:Paper` (use the source's
   `https://doi.org/` IRI, typed `fabio:ScholarlyWork` if a type is needed), `delphi:Model` (an
   assessing `prov:SoftwareAgent` with `delphi:usesModel` to a `delphi:LanguageModel`),
