@@ -1,17 +1,17 @@
 ---
 name: delphi
-description: "Build and use the Project Delphi knowledge graph as nanopublications — core-science concepts linked to an EGFR→ERK subgraph in A431 cells, with reusable cell programs. Use for anything Delphi: adding a source or model to the graph, recording claims and their evidence, defining vocabulary or templates, defining or verifying programs, querying the graph, or preparing a release."
+description: "Build and use the Project Delphi knowledge graph as nanopublications — core-science concepts linked to cell biology, with reusable cell programs. Use for anything Delphi: adding a source or model to the graph, recording claims and their evidence, defining vocabulary or templates, defining or verifying programs, querying the graph, or preparing a release."
 license: MIT
 compatibility: Requires the nanopub skill, the nanopub-java CLI (np) with Java, and network access to fetch sources.
 metadata:
   author: knowledgepixels
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # Project Delphi
 
 Delphi is a knowledge graph in which every record is a nanopublication. It connects
-mathematics, physics and chemistry to a narrow cell biology domain, keeps source evidence, and
+mathematics, physics and chemistry to cell biology, keeps source evidence, and
 stores reusable mathematical programs that can be applied in a specific cellular context.
 
 Nanopub mechanics come from the `nanopub` skill; load it too.
@@ -28,6 +28,13 @@ Nanopub mechanics come from the `nanopub` skill; load it too.
   claim template, with free-text context in `delphi:context`. Their evidence is
   `delphi:EvidenceItem`, linked with `delphi:hasEvidence` and created with the Project Delphi
   evidence item template. Referenced entities such as genes or drugs are `delphi:Concept`.
+- Claims and evidence items must be created with these template versions, which use only
+  ontology v2.0 terms, and must declare them in `nt:wasCreatedFromTemplate`:
+  - claim: <https://w3id.org/np/RAzvNtXMF1BMBsNyhsUaXMA0GSPcHgnQRy57uCGyN9QWQ>
+  - evidence item: <https://w3id.org/np/RAP9tVGTyoRf_9Pb4OJ2ldww5AFVcuTfRilAv8EAWzUC4>
+
+  Earlier versions of these templates use the legacy `probknow` terms, so a record in v2.0
+  terms cannot truthfully declare them.
 - Deprecated terms are not used in new records: `delphi:Paper` (use the source's
   `https://doi.org/` IRI, typed `fabio:ScholarlyWork` if a type is needed), `delphi:Model` (an
   assessing `prov:SoftwareAgent` with `delphi:usesModel` to a `delphi:LanguageModel`),
