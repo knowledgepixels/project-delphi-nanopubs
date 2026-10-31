@@ -1,17 +1,17 @@
 ---
 name: delphi
-description: "Build and use the Project Delphi knowledge graph as nanopublications — core-science concepts linked to an EGFR→ERK subgraph in A431 cells, with reusable cell programs. Use for anything Delphi: adding a source or model to the graph, recording claims and their evidence, defining vocabulary or templates, defining or verifying programs, querying the graph, or preparing a release."
+description: "Build and use the Project Delphi knowledge graph as nanopublications — core-science concepts linked to cell biology, with reusable cell programs. Use for anything Delphi: adding a source or model to the graph, recording claims and their evidence, defining vocabulary or templates, defining or verifying programs, querying the graph, or preparing a release."
 license: MIT
 compatibility: Requires the nanopub skill, the nanopub-java CLI (np) with Java, and network access to fetch sources.
 metadata:
   author: knowledgepixels
-  version: "0.2.0"
+  version: "0.2.1"
 ---
 
 # Project Delphi
 
 Delphi is a knowledge graph in which every record is a nanopublication. It connects
-mathematics, physics and chemistry to a narrow cell biology domain, keeps source evidence, and
+mathematics, physics and chemistry to cell biology, keeps source evidence, and
 stores reusable mathematical programs that can be applied in a specific cellular context.
 
 Nanopub mechanics come from the `nanopub` skill; load it too.
