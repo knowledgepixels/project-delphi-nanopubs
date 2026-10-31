@@ -26,8 +26,9 @@ Nanopub mechanics come from the `nanopub` skill; load it too.
   The legacy `https://w3id.org/probknow/...` IRIs are never used in new records.
 - Claims are `delphi:Claim` (a subclass of `delphi:Hypothesis`), created with the Project Delphi
   claim template, with free-text context in `delphi:context`. Their evidence is
-  `delphi:EvidenceItem`, linked with `delphi:hasEvidence` and created with the Project Delphi
-  evidence item template. Referenced entities such as genes or drugs are `delphi:Concept`.
+  `delphi:EvidenceItem`, linked from the claim with `prov:wasSupportedBy` (as the claim template
+  does), not `delphi:hasEvidence`, and created with the Project Delphi evidence item template.
+  Referenced entities such as genes or drugs are `delphi:Concept`.
 - Claims and evidence items must be created with these template versions, which use only
   ontology v2.0 terms, and must declare them in `nt:wasCreatedFromTemplate`:
   - claim: <https://w3id.org/np/RAzvNtXMF1BMBsNyhsUaXMA0GSPcHgnQRy57uCGyN9QWQ>
