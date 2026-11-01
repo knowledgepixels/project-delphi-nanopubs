@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the nanopub skill, the nanopub-java CLI (np) with Java, and network access to fetch sources.
 metadata:
   author: knowledgepixels
-  version: "0.3.0"
+  version: "0.4.0"
 ---
 
 # Project Delphi
@@ -36,6 +36,19 @@ Nanopub mechanics come from the `nanopub` skill; load it too.
 
   Earlier versions of these templates use the legacy `probknow` terms, so a record in v2.0
   terms cannot truthfully declare them.
+- What a claim is about (a gene, protein, chemical, process, anatomical entity, phenotype or
+  taxon) is stated with `schema:about`, from the claim to an IRI for that thing:
+  `<claim> schema:about <http://identifiers.org/hgnc/7865>`. It is not `delphi:domain` and not
+  `dct:subject`, which carry the claim's curated domain. These links go in their own
+  nanopublication, never in the claim's, created with the Project Delphi claim subject-matter
+  template and declaring it in `nt:wasCreatedFromTemplate`:
+  - claim subject matter: <https://w3id.org/np/RAUScXW9qrWeA-x8TUsvmHkqJJsHTHke8ev4eus4e61qQ>
+    (cross-version ID `https://w3id.org/np/RAUScXW9qrWeA-x8TUsvmHkqJJsHTHke8ev4eus4e61qQ/template`,
+    governed by the Project Delphi space)
+
+  One record covers one claim and may list several IRIs: every `schema:about` triple in it has
+  the same claim as subject. The claim IRI is the published one, never a new one. Links made
+  automatically (for example by grounding entity names) are reviewed before they are published.
 - Deprecated terms are not used in new records: `delphi:Paper` (use the source's
   `https://doi.org/` IRI, typed `fabio:ScholarlyWork` if a type is needed), `delphi:Model` (an
   assessing `prov:SoftwareAgent` with `delphi:usesModel` to a `delphi:LanguageModel`),
